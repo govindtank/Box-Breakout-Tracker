@@ -1,0 +1,6 @@
+{
+  "name": "Darvas Box Breakout Tracker",
+  "description": "Real-time market dashboard with Darvas Box strategy charting, backtesting, and performance metrics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

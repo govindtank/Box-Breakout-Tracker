@@ -1,0 +1,227 @@
+export interface Candle {
+  time: number; // Unix timestamp in seconds
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface DarvasBox {
+  top: number;
+  bottom: number;
+  startTime: number;
+  endTime: number | null;
+}
+
+export interface Trade {
+  id: string;
+  entryTime: number;
+  entryPrice: number;
+  exitTime: number | null;
+  exitPrice: number | null;
+  pnl: number;
+  pnlPercent: number;
+  status: 'OPEN' | 'CLOSED';
+}
+
+export interface BacktestMetrics {
+  totalTrades: number;
+  winRate: number;
+  profitFactor: number;
+  totalPnL: number;
+  maxDrawdown: number;
+  sharpeRatio: number;
+}
+
+export function calculateDarvasStrategy(
+  candles: Candle[],
+  ghostDays: number = 3,
+  initialCapital: number = 10000
+) {
+  let boxes: DarvasBox[] = [];
+  let trades: Trade[] = [];
+  
+  let topSeries: { time: number; value: number }[] = [];
+  let bottomSeries: { time: number; value: number }[] = [];
+
+  let state: 'SEEK_TOP' | 'SEEK_BOTTOM' | 'BOX_FORMED' = 'SEEK_TOP';
+  
+  let potentialTop = -Infinity;
+  let potentialTopTime = 0;
+  let topWaitCount = 0;
+
+  let potentialBottom = Infinity;
+  let potentialBottomTime = 0;
+  let bottomWaitCount = 0;
+
+  let currentTop = 0;
+  let currentBottom = 0;
+  let currentBoxStartTime = 0;
+
+  let activeTrade: Trade | null = null;
+  let equity = initialCapital;
+  let equityCurve: { time: number; equity: number }[] = [];
+  let peakEquity = initialCapital;
+  let maxDrawdown = 0;
+
+  for (let i = 0; i < candles.length; i++) {
+    const candle = candles[i];
+    
+    // --- Box State Machine ---
+    if (state === 'SEEK_TOP') {
+      if (candle.high > potentialTop) {
+        potentialTop = candle.high;
+        potentialTopTime = candle.time;
+        topWaitCount = 0;
+      } else {
+        topWaitCount++;
+        if (topWaitCount >= ghostDays) {
+          currentTop = potentialTop;
+          state = 'SEEK_BOTTOM';
+          potentialBottom = candle.low;
+          potentialBottomTime = candle.time;
+          bottomWaitCount = 0;
+        }
+      }
+    } else if (state === 'SEEK_BOTTOM') {
+      if (candle.high > currentTop) {
+        // Top breached before bottom formed, restart top search
+        state = 'SEEK_TOP';
+        potentialTop = candle.high;
+        potentialTopTime = candle.time;
+        topWaitCount = 0;
+      } else if (candle.low < potentialBottom) {
+        potentialBottom = candle.low;
+        potentialBottomTime = candle.time;
+        bottomWaitCount = 0;
+      } else {
+        bottomWaitCount++;
+        if (bottomWaitCount >= ghostDays) {
+          currentBottom = potentialBottom;
+          currentBoxStartTime = potentialTopTime; // Box starts when top was hit
+          state = 'BOX_FORMED';
+          
+          boxes.push({
+            top: currentTop,
+            bottom: currentBottom,
+            startTime: currentBoxStartTime,
+            endTime: null,
+          });
+        }
+      }
+    } else if (state === 'BOX_FORMED') {
+      // Record levels for charting
+      topSeries.push({ time: candle.time, value: currentTop });
+      bottomSeries.push({ time: candle.time, value: currentBottom });
+
+      // Check breakout/breakdown
+      if (candle.close > currentTop) {
+        // Breakout - form new box, also entry signal if no active trade
+        if (boxes.length > 0) {
+          boxes[boxes.length - 1].endTime = candle.time;
+        }
+        
+        if (!activeTrade) {
+          activeTrade = {
+            id: `tr-${candle.time}`,
+            entryTime: candle.time,
+            entryPrice: candle.close,
+            exitTime: null,
+            exitPrice: null,
+            pnl: 0,
+            pnlPercent: 0,
+            status: 'OPEN',
+          };
+        }
+        
+        state = 'SEEK_TOP';
+        potentialTop = candle.high;
+        potentialTopTime = candle.time;
+        topWaitCount = 0;
+      } else if (candle.close < currentBottom) {
+        // Breakdown - form new box, also exit signal if active trade
+        if (boxes.length > 0) {
+          boxes[boxes.length - 1].endTime = candle.time;
+        }
+
+        if (activeTrade) {
+          const pnl = activeTrade.entryPrice ? candle.close - activeTrade.entryPrice : 0;
+          const pnlPercent = activeTrade.entryPrice ? (pnl / activeTrade.entryPrice) * 100 : 0;
+          
+          trades.push({
+            ...activeTrade,
+            exitTime: candle.time,
+            exitPrice: candle.close,
+            pnl: (equity * pnlPercent) / 100, // Position sizing logic: full equity
+            pnlPercent,
+            status: 'CLOSED'
+          });
+          
+          equity += (equity * pnlPercent) / 100;
+          activeTrade = null;
+        }
+
+        state = 'SEEK_TOP';
+        potentialTop = candle.high;
+        potentialTopTime = candle.time;
+        topWaitCount = 0;
+      }
+    }
+
+    // Update equity curve (mark-to-market if active trade)
+    let currentEquity = equity;
+    if (activeTrade) {
+       const unrealizedPnlPercent = (candle.close - activeTrade.entryPrice) / activeTrade.entryPrice;
+       currentEquity = equity * (1 + unrealizedPnlPercent);
+    }
+    
+    if (currentEquity > peakEquity) peakEquity = currentEquity;
+    const currentDrawdown = (peakEquity - currentEquity) / peakEquity;
+    if (currentDrawdown > maxDrawdown) maxDrawdown = currentDrawdown;
+
+    equityCurve.push({ time: candle.time, equity: currentEquity });
+  }
+
+  // Calculate Metrics
+  const closedTrades = trades.filter(t => t.status === 'CLOSED');
+  const winningTrades = closedTrades.filter(t => t.pnl > 0);
+  const losingTrades = closedTrades.filter(t => t.pnl <= 0);
+  
+  const winRate = closedTrades.length > 0 ? (winningTrades.length / closedTrades.length) * 100 : 0;
+  
+  const grossProfit = winningTrades.reduce((acc, t) => acc + t.pnl, 0);
+  const grossLoss = Math.abs(losingTrades.reduce((acc, t) => acc + t.pnl, 0));
+  const profitFactor = grossLoss === 0 ? (grossProfit > 0 ? 99 : 0) : grossProfit / grossLoss;
+
+  // Simplified Sharpe Ratio (Daily returns approximation)
+  let sumReturns = 0;
+  let sumReturnsSq = 0;
+  for (let i = 1; i < equityCurve.length; i++) {
+      const ret = (equityCurve[i].equity - equityCurve[i-1].equity) / equityCurve[i-1].equity;
+      sumReturns += ret;
+      sumReturnsSq += ret * ret;
+  }
+  const avgReturn = sumReturns / equityCurve.length;
+  const variance = (sumReturnsSq / equityCurve.length) - (avgReturn * avgReturn);
+  const stdDev = Math.sqrt(variance);
+  const sharpeRatio = stdDev === 0 ? 0 : (avgReturn / stdDev) * Math.sqrt(365); // Annualized for crypto
+
+  const metrics: BacktestMetrics = {
+    totalTrades: closedTrades.length,
+    winRate,
+    profitFactor,
+    totalPnL: equity - initialCapital,
+    maxDrawdown: maxDrawdown * 100,
+    sharpeRatio
+  };
+
+  return {
+    boxes,
+    topSeries,
+    bottomSeries,
+    trades: activeTrade ? [...trades, activeTrade] : trades,
+    metrics,
+    equityCurve
+  };
+}
