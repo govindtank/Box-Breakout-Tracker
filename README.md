@@ -1,20 +1,64 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# 📊 Darvas Box Breakout Tracker
 
-# Run and deploy your AI Studio app
+A real-time trading dashboard that detects **Darvas Box** patterns on crypto markets using Binance data. Features live charting, automated backtesting, and performance analytics.
 
-This contains everything you need to run your app locally.
+Built with React 19, TypeScript, Vite 6, Tailwind CSS 4, and lightweight-charts (TradingView library).
 
-View your app in AI Studio: https://ai.studio/apps/5108049e-3e7f-4814-a404-332aab3766cc
+## Features
 
-## Run Locally
+- **Darvas Box Detection** — State machine algorithm identifies box tops/bottoms using configurable ghost-day lookback
+- **Breakout Trading Signals** — Auto-generates BUY/SELL markers on breakout/breakdown events
+- **Backtesting Engine** — Calculates PnL, win rate, profit factor, Sharpe ratio, and max drawdown
+- **Live Chart** — TradingView-style candlestick chart with box overlay lines and trade markers
+- **Binance Integration** — Fetches historical data and supports WebSocket real-time updates for BTC, ETH, and SOL
+- **Risk Management Panel** — Auto-stop loss, position sizing, and capital allocation controls
+- **Execution Log** — Real-time trade history with PnL tracking
+- **Dark Terminal UI** — Professional dark theme with custom scrollbars and responsive layout
 
-**Prerequisites:**  Node.js
+## Quick Start
 
+```bash
+# Install dependencies
+npm install
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+# Set up environment
+cp .env.example .env.local
+# Edit .env.local with your GEMINI_API_KEY (optional, for AI features)
+
+# Run development server
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+## Build & Deploy
+
+```bash
+npm run build    # Outputs to dist/
+npm run preview  # Preview production build locally
+```
+
+The project is deployed via GitHub Pages at:
+👉 **[https://govindtank.github.io/Box-Breakout-Tracker](https://govindtank.github.io/Box-Breakout-Tracker)**
+
+## Tech Stack
+
+| Component | Library |
+|---|---|
+| Framework | React 19 + TypeScript |
+| Build Tool | Vite 6 |
+| Styling | Tailwind CSS 4 |
+| Charts | lightweight-charts (TradingView) |
+| Data | Binance REST + WebSocket APIs |
+| Icons | Lucide React |
+| Animation | Motion |
+
+## Supported Pairs
+
+- BTC/USDT
+- ETH/USDT
+- SOL/USDT
+
+## License
+
+MIT

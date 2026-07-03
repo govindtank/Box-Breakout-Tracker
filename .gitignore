@@ -1,8 +1,12 @@
 node_modules/
-build/
 dist/
+build/
 coverage/
-.DS_Store
 *.log
-.env*
+.DS_Store
+*.local
+.env.local
 !.env.example
+
+# Keep git metadata intact
+!/.git
