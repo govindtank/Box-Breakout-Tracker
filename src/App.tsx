@@ -1,16 +1,18 @@
 import { useEffect, useState, useCallback, ReactNode } from 'react';
-import { fetchIndianStockData } from './lib/marketData';
+import { fetchIndianStockData, FetchResult } from './lib/marketData';
 import { calculateDarvasStrategy, Candle, Trade, BacktestMetrics } from './lib/darvas';
 import { TradingChart } from './components/Chart';
 import StockSearch from './components/StockSearch';
 import EducationView from './components/Education';
 import AlertsPanel from './components/AlertsPanel';
+import { scanStock, ScannerResult, getScannerStocks } from './lib/scanner';
 import { formatCurrency, formatPercent, formatVolume, formatDate } from './lib/utils';
 import { AppSettings } from './lib/constants';
 import {
   Activity, BarChart3, LineChart, Briefcase, BookOpen,
   Bell, Search, Settings, Download, TrendingUp,
   ChevronDown, ChevronUp, Clock, Filter, AlertTriangle,
+  X, RefreshCw, ExternalLink
 } from 'lucide-react';
 
 // Tab configuration
@@ -70,31 +72,38 @@ export default function App() {
   const [volumeThreshold, setVolumeThreshold] = useState(1.5);
   const [breakoutBuffer, setBreakoutBuffer] = useState(0.15);
   const [isLoading, setIsLoading] = useState(true);
-  const [dataSource, setDataSource] = useState<'live' | 'simulated'>('live');
+  const [dataSource, setDataSource] = useState<'yahoo_live' | 'simulated'>('simulated');
+  const [dataFetchTime, setDataFetchTime] = useState<number>(0);
   const [useINR, setUseINR] = useState(true);
   const [showParams, setShowParams] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Scanner state
+  const [showScanner, setShowScanner] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanResults, setScanResults] = useState<ScannerResult[]>([]);
+  const [scanProgress, setScanProgress] = useState('');
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await fetchIndianStockData(symbol, '1d', '1y');
-      if (data.length === 0) {
-        throw new Error('No data received');
+      const result: FetchResult = await fetchIndianStockData(symbol, '1d', '1y');
+      
+      if (result.candles.length === 0) {
+        throw new Error('No data received from any data source');
       }
-      setCandles(data);
-      setDataSource('live');
-      const result = calculateDarvasStrategy(data, ghostDays);
-      setDarvasData(result);
+      
+      setCandles(result.candles);
+      setDataSource(result.source);
+      setDataFetchTime(result.fetchedAt);
+      
+      const darvasResult = calculateDarvasStrategy(result.candles, ghostDays);
+      setDarvasData(darvasResult);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load data');
+      const msg = err instanceof Error ? err.message : 'Failed to load data';
+      setError(msg);
       setDataSource('simulated');
-      // Retry with simulated data
-      const simData = await fetchIndianStockData(symbol, '1d', '1y');
-      setCandles(simData);
-      const result = calculateDarvasStrategy(simData, ghostDays);
-      setDarvasData(result);
     }
     setIsLoading(false);
   }, [symbol, ghostDays]);
@@ -106,6 +115,98 @@ export default function App() {
   const dailyChange = lastCandle && prevCandle
     ? ((lastCandle.close - prevCandle.close) / prevCandle.close) * 100
     : 0;
+
+  // Scanner
+  const runScanner = useCallback(async () => {
+    setScanning(true);
+    setShowScanner(true);
+    setScanResults([]);
+    
+    const stocks = getScannerStocks();
+    const results: ScannerResult[] = [];
+    
+    for (let i = 0; i < stocks.length; i++) {
+      const stock = stocks[i];
+      setScanProgress(`Scanning ${stock.name} (${i + 1}/${stocks.length})...`);
+      try {
+        const result = await scanStock(stock.symbol, stock.name);
+        results.push(result);
+      } catch {
+        results.push({
+          symbol: stock.symbol,
+          name: stock.name,
+          currentPrice: 0,
+          boxes: 0,
+          activeBox: null,
+          signal: 'NONE',
+          signalStrength: 0,
+          volumeSurge: 0,
+          trades: 0,
+          winRate: 0,
+          daysInBox: 0,
+          isConsolidating: false,
+          source: 'error',
+        });
+      }
+    }
+    
+    // Sort: breakout signals first, then box formations, then by signal strength
+    results.sort((a, b) => {
+      const order = { BREAKOUT: 0, BOX_FORMED: 1, WATCHING: 2, BREAKDOWN: 3, NONE: 4 };
+      const diff = (order[a.signal] ?? 5) - (order[b.signal] ?? 5);
+      if (diff !== 0) return diff;
+      return b.signalStrength - a.signalStrength;
+    });
+    
+    setScanResults(results);
+    setScanProgress(`Scan complete — found ${results.filter(r => r.signal === 'BREAKOUT' || r.signal === 'BOX_FORMED').length} setups`);
+    setScanning(false);
+  }, []);
+
+  // Get Darvas-based insight from actual pattern detection
+  const getMarketInsight = () => {
+    if (!darvasData) return 'Load stock data to see Darvas pattern analysis';
+    if (darvasData.boxes.length === 0) {
+      return `No Darvas boxes detected for ${symbol.replace('.NS', '')} with ${ghostDays} ghost days. Try lowering ghost days or choose a stock with clearer consolidation patterns.`;
+    }
+    
+    const lastBox = darvasData.boxes[darvasData.boxes.length - 1];
+    const activeTrade = darvasData.trades.find(t => t.status === 'OPEN');
+    const closedTrades = darvasData.trades.filter(t => t.status === 'CLOSED');
+    const profitableTrades = closedTrades.filter(t => t.pnl > 0);
+    
+    let insight = '';
+    
+    if (activeTrade) {
+      insight = `📈 Active LONG in ${symbol.replace('.NS', '')} — entered at ${formatCurrency(activeTrade.entryPrice, true)}, current P&L: ${formatCurrency(activeTrade.pnl, true)} (${formatPercent(activeTrade.pnlPercent)}).`;
+    }
+    
+    if (lastBox && lastBox.endTime === null) {
+      const boxHeight = ((lastBox.top - lastBox.bottom) / lastBox.bottom) * 100;
+      const priceInBox = lastCandle && lastCandle.close >= lastBox.bottom && lastCandle.close <= lastBox.top;
+      const nearTop = lastCandle && lastCandle.close > lastBox.top * 0.95;
+      
+      if (priceInBox) {
+        if (nearTop) {
+          insight = `🔵 Darvas box active — price near top (₹${formatCurrency(lastBox.top, true).replace('₹', '')}). Watch for breakout above ₹${formatCurrency(lastBox.top * 1.015, true).replace('₹', '')} for entry signal.`;
+        } else {
+          insight = `🟡 Darvas box: ₹${formatCurrency(lastBox.bottom, true).replace('₹', '')} – ₹${formatCurrency(lastBox.top, true).replace('₹', '')} (${boxHeight.toFixed(1)}% range). Price consolidating — ${ghostDays}-day ghost rule active.`;
+        }
+      } else if (lastCandle && lastCandle.close > lastBox.top) {
+        const bOsc = ((lastCandle.close - lastBox.top) / lastBox.top) * 100;
+        insight = `💚 BREAKOUT! Price ${bOsc.toFixed(1)}% above box top (₹${formatCurrency(lastBox.top, true).replace('₹', '')}). This is the Darvas entry signal — LONG on confirmation.`;
+      } else if (lastCandle && lastCandle.close < lastBox.bottom) {
+        insight = `🔴 Breakdown below box bottom (₹${formatCurrency(lastBox.bottom, true).replace('₹', '')}). Darvas rule: exit longs / avoid entry until new box forms.`;
+      }
+    }
+    
+    if (profitableTrades.length > 0) {
+      const avgWin = profitableTrades.reduce((s, t) => s + t.pnlPercent, 0) / profitableTrades.length;
+      insight += ` Historical: ${profitableTrades.length}/${closedTrades.length} winning trades (avg +${formatPercent(avgWin)}/trade).`;
+    }
+    
+    return insight || `${darvasData.boxes.length} Darvas box patterns detected. ${closedTrades.length} backtested trades, ${formatPercent(darvasData.metrics.winRate)} win rate.`;
+  };
 
   // Render the main content area based on active tab
   const renderContent = () => {
@@ -119,7 +220,7 @@ export default function App() {
       case 'settings':
         return <SettingsPanel settings={DEFAULT_SETTINGS} />;
       default:
-        return null; // terminal is rendered in the main area
+        return null;
     }
   };
 
@@ -155,16 +256,25 @@ export default function App() {
             ))}
           </nav>
         </div>
-        {/* Live Status + Price Ticker */}
+        {/* Data Source Status + Price Ticker */}
         <div className="flex items-center space-x-3 text-xs">
           <div className={`flex items-center space-x-1 px-2 py-1 rounded border ${
-            dataSource === 'live'
+            dataSource === 'yahoo_live'
               ? 'bg-green-500/10 text-green-500 border-green-500/20'
               : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
           }`}>
-            <div className={`w-1.5 h-1.5 rounded-full ${dataSource === 'live' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
-            <span>{dataSource === 'live' ? 'LIVE' : 'SIM'}</span>
+            <div className={`w-1.5 h-1.5 rounded-full ${dataSource === 'yahoo_live' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
+            <span>{dataSource === 'yahoo_live' ? 'YAHOO LIVE' : 'SIMULATED'}</span>
           </div>
+          
+          {/* Data source tip */}
+          {dataSource === 'simulated' && (
+            <div className="hidden md:flex items-center space-x-1 text-yellow-500/70 text-[9px] max-w-[140px]">
+              <AlertTriangle className="w-2.5 h-2.5 shrink-0" />
+              <span>Browser CORS blocks real API — run locally with `npm run dev` for live data</span>
+            </div>
+          )}
+          
           <div className="hidden md:flex items-center space-x-2 border-l border-slate-700 pl-3">
             <span className="text-slate-400">{symbol.replace('.NS', '')}</span>
             {lastCandle && (
@@ -202,6 +312,13 @@ export default function App() {
                   ))}
                 </optgroup>
               </select>
+              
+              {/* Data freshness indicator */}
+              {dataFetchTime > 0 && (
+                <div className="text-[9px] text-slate-600 mt-1 font-mono">
+                  Updated: {new Date(dataFetchTime).toLocaleTimeString()}
+                </div>
+              )}
             </div>
 
             {/* Collapsible Parameters */}
@@ -237,11 +354,24 @@ export default function App() {
                   <h3 className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-2">
                     Box Analysis
                   </h3>
-                  <QuickStat label="Boxes Found" value={darvasData.boxes.length.toString()} />
+                  <QuickStat label="Boxes Detected" value={darvasData.boxes.length.toString()} />
                   <QuickStat label="Active Trades" value={darvasData.trades.filter(t => t.status === 'OPEN').length.toString()} />
                   <QuickStat label="Total Trades" value={darvasData.metrics.totalTrades.toString()} />
                   <QuickStat label="Win Rate" value={formatPercent(darvasData.metrics.winRate)} />
                   <QuickStat label="Profit Factor" value={darvasData.metrics.profitFactor.toFixed(2)} />
+                  
+                  {/* Current Box Info */}
+                  {darvasData.boxes.filter(b => b.endTime === null).length > 0 && (
+                    <div className="mt-2 p-2 bg-blue-600/10 rounded border border-blue-500/20">
+                      <div className="text-[9px] text-blue-400 font-bold uppercase">Active Box</div>
+                      <div className="text-[10px] text-slate-300 mt-1">
+                        Top: {formatCurrency(darvasData.boxes[darvasData.boxes.length - 1].top, true)}
+                      </div>
+                      <div className="text-[10px] text-slate-300">
+                        Bot: {formatCurrency(darvasData.boxes[darvasData.boxes.length - 1].bottom, true)}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -253,12 +383,16 @@ export default function App() {
                 disabled={isLoading}
                 className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-1.5 rounded text-xs transition-colors flex items-center justify-center space-x-1.5"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>{isLoading ? 'Loading...' : 'Refresh Data'}</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                <span>{isLoading ? 'Fetching...' : 'Refresh Data'}</span>
               </button>
-              <button className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 rounded text-xs transition-colors flex items-center justify-center space-x-1.5">
+              <button
+                onClick={runScanner}
+                disabled={scanning}
+                className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 rounded text-xs transition-colors flex items-center justify-center space-x-1.5"
+              >
                 <TrendingUp className="w-3.5 h-3.5" />
-                <span>Scanner</span>
+                <span>{scanning ? 'Scanning...' : 'Run Scanner'}</span>
               </button>
             </div>
           </aside>
@@ -269,7 +403,7 @@ export default function App() {
           {activeTab === 'terminal' ? (
             <>
               {/* Chart Info Overlay */}
-              <div className="absolute top-3 left-3 z-20 flex space-x-2">
+              <div className="absolute top-3 left-3 z-20 flex space-x-2 flex-wrap gap-y-1">
                 <div className="px-2.5 py-1 bg-[#131722]/80 backdrop-blur rounded border border-slate-700 text-[10px] flex items-center space-x-2 shadow-sm">
                   <span className="font-bold text-white">{symbol.replace('.NS', '')}</span>
                   <span className="text-slate-400 font-mono">NSE · 1D</span>
@@ -279,7 +413,30 @@ export default function App() {
                     </span>
                   )}
                 </div>
+                
+                {/* Darvas box overlay info */}
+                {darvasData && darvasData.boxes.filter(b => b.endTime === null).length > 0 && (
+                  <div className="px-2.5 py-1 bg-[#131722]/80 backdrop-blur rounded border border-slate-700 text-[10px] flex items-center space-x-2 shadow-sm">
+                    <span className="text-indigo-400 font-bold">BOX</span>
+                    <span className="text-slate-400">
+                      {formatCurrency(darvasData.boxes[darvasData.boxes.length - 1].bottom, true)}
+                      <span className="text-slate-600 mx-0.5">-</span>
+                      {formatCurrency(darvasData.boxes[darvasData.boxes.length - 1].top, true)}
+                    </span>
+                  </div>
+                )}
               </div>
+
+              {/* Simulated data banner */}
+              {dataSource === 'simulated' && (
+                <div className="absolute top-3 right-3 z-20">
+                  <div className="px-2.5 py-1 bg-yellow-600/20 border border-yellow-500/30 rounded text-[9px] text-yellow-400 flex items-center space-x-1.5">
+                    <AlertTriangle className="w-2.5 h-2.5" />
+                    <span>SIMULATED DATA — Yahoo Finance API blocked by browser CORS</span>
+                    <span className="text-yellow-600 ml-1">Run <code className="bg-yellow-900/30 px-1 rounded">npm run dev</code> on localhost for live data</span>
+                  </div>
+                </div>
+              )}
 
               {/* Chart Area */}
               <div className="flex-1 flex items-center justify-center p-2 min-h-0">
@@ -292,6 +449,7 @@ export default function App() {
                   <div className="flex flex-col items-center justify-center space-y-2 text-center">
                     <AlertTriangle className="w-8 h-8 text-yellow-500" />
                     <div className="text-xs text-slate-400">{error}</div>
+                    <div className="text-[10px] text-slate-500">Try running locally: <code className="bg-slate-800 px-1.5 py-0.5 rounded">npm run dev</code></div>
                     <button onClick={loadData} className="text-xs text-blue-400 hover:underline">Retry</button>
                   </div>
                 ) : (
@@ -354,24 +512,37 @@ export default function App() {
                 <div className="space-y-2 text-xs">
                   <StatRow label="Total Trades" value={darvasData.metrics.totalTrades.toString()} />
                   <StatRow label="Sharpe Ratio" value={darvasData.metrics.sharpeRatio.toFixed(2)} />
-                  <StatRow label="Boxes Identified" value={darvasData.boxes.length.toString()} />
+                  <StatRow label="Boxes Detected" value={darvasData.boxes.length.toString()} />
                   <StatRow label="Open Positions" value={darvasData.trades.filter(t => t.status === 'OPEN').length.toString()} />
+                  
+                  {/* Box details */}
+                  {darvasData.boxes.length > 0 && (
+                    <>
+                      <div className="border-t border-slate-800 pt-2 mt-2">
+                        <h4 className="text-[9px] text-slate-500 font-bold mb-1 uppercase tracking-widest">Detected Boxes</h4>
+                        {darvasData.boxes.slice(-5).reverse().map((box: any, i: number) => (
+                          <div key={i} className="text-[9px] flex justify-between py-0.5">
+                            <span className="text-slate-500">Box #{darvasData.boxes.length - i}</span>
+                            <span className="text-slate-300">{formatCurrency(box.bottom, true)} - {formatCurrency(box.top, true)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                {/* Strategy Tip */}
+                {/* Darvas-based Strategy Insight — NEVER random */}
                 <div className="mt-4 p-3 bg-blue-600/10 rounded border border-blue-500/20 text-xs leading-relaxed">
                   <p className="font-bold text-blue-400 mb-1 flex items-center space-x-1">
                     <Activity className="w-3 h-3" />
-                    <span>Market Insight</span>
+                    <span>Darvas Pattern Analysis</span>
                   </p>
                   <p className="text-slate-400 text-[10px]">
-                    {darvasData.metrics.totalTrades > 0
-                      ? `Backtest shows ${darvasData.metrics.totalTrades} trades with ${formatPercent(darvasData.metrics.winRate)} win rate over ${candles.length} days of data.`
-                      : 'No trades generated with current parameters. Try reducing ghost days or adjusting volume threshold.'}
+                    {getMarketInsight()}
                   </p>
                 </div>
 
-                {/* Diversification */}
+                {/* Diversity note */}
                 <div className="mt-4">
                   <h4 className="text-[10px] text-slate-500 font-bold mb-2 uppercase tracking-widest">Sector Allocation</h4>
                   <div className="h-1.5 w-full bg-slate-800 rounded-full flex overflow-hidden shadow-inner">
@@ -386,6 +557,19 @@ export default function App() {
                     <span className="flex items-center text-slate-400"><div className="w-1.5 h-1.5 bg-emerald-500 rounded-full mr-1" /> Small Cap</span>
                   </div>
                 </div>
+
+                {/* Data source warning */}
+                {dataSource === 'simulated' && (
+                  <div className="mt-3 p-2 bg-yellow-500/10 rounded border border-yellow-500/20">
+                    <p className="text-[9px] text-yellow-500 flex items-center space-x-1">
+                      <AlertTriangle className="w-2.5 h-2.5 shrink-0" />
+                      <span>⚠ Running on simulated data. Backtest metrics reflect simulated price action, not real market data.</span>
+                    </p>
+                    <p className="text-[8px] text-yellow-600 mt-1">
+                      For live data: run <code className="bg-yellow-900/30 px-1 rounded">npm run dev</code> on localhost
+                    </p>
+                  </div>
+                )}
               </>
             ) : (
               <div className="text-center py-8 text-slate-500 text-xs">
@@ -397,18 +581,192 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer Ticker */}
+      {/* Scanner Modal */}
+      {showScanner && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="w-[90vw] max-w-3xl max-h-[80vh] bg-[#131722] border border-slate-700 rounded-lg shadow-2xl flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
+              <div className="flex items-center space-x-2">
+                <TrendingUp className="w-4 h-4 text-blue-400" />
+                <h2 className="text-sm font-bold text-white">Darvas Scanner</h2>
+                {scanning && (
+                  <div className="text-[10px] text-slate-400 font-mono animate-pulse">{scanProgress}</div>
+                )}
+                {!scanning && scanResults.length > 0 && (
+                  <div className="text-[10px] text-slate-500">
+                    {scanResults.filter(r => r.signal === 'BREAKOUT').length} breakout · {scanResults.filter(r => r.signal === 'BOX_FORMED').length} box formed · {scanResults.filter(r => r.signal === 'NONE').length} no pattern
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setShowScanner(false)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
+              {scanning && scanResults.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-12 space-y-3">
+                  <div className="w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <div className="text-xs text-slate-400 font-mono">{scanProgress}</div>
+                </div>
+              )}
+
+              {!scanning && scanResults.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-12 space-y-2">
+                  <TrendingUp className="w-10 h-10 text-slate-600" />
+                  <p className="text-xs text-slate-500">Click "Run Scanner" to scan NSE stocks for Darvas patterns</p>
+                </div>
+              )}
+
+              {scanResults.length > 0 && (
+                <div className="space-y-1">
+                  {/* Header row */}
+                  <div className="flex text-[9px] text-slate-500 font-bold uppercase tracking-wider px-3 py-1.5 border-b border-slate-800">
+                    <div className="w-[140px] shrink-0">Stock</div>
+                    <div className="w-[80px] shrink-0 text-right">Price</div>
+                    <div className="w-[60px] shrink-0 text-center">Boxes</div>
+                    <div className="w-[70px] shrink-0 text-center">Box Range</div>
+                    <div className="w-[90px] shrink-0 text-center">Signal</div>
+                    <div className="w-[50px] shrink-0 text-center">Str.</div>
+                    <div className="w-[50px] shrink-0 text-right">Vol.</div>
+                    <div className="w-[50px] shrink-0 text-right">Win%</div>
+                    <div className="flex-1 text-right">Source</div>
+                  </div>
+
+                  {scanResults.map((result, i) => (
+                    <div key={result.symbol}>
+                      <ScannerRow result={result} index={i} onSelect={() => {
+                        setSymbol(result.symbol);
+                        setShowScanner(false);
+                      }} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-4 py-2 border-t border-slate-700 flex items-center justify-between text-[10px] text-slate-500 shrink-0">
+              <span>{scanResults.length} stocks scanned</span>
+              <div className="flex space-x-3">
+                <span className="flex items-center"><span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1" /> Breakout</span>
+                <span className="flex items-center"><span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1" /> Box Formed</span>
+                <span className="flex items-center"><span className="w-1.5 h-1.5 rounded-full bg-yellow-500 mr-1" /> Watching</span>
+              </div>
+              <button 
+                onClick={runScanner}
+                className="text-blue-400 hover:text-blue-300 flex items-center space-x-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>Rescan</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Footer Ticker — Shows actual scanned data summary */}
       <footer className="h-7 bg-[#1e222d] border-t border-slate-800 flex items-center px-3 overflow-hidden shrink-0 z-30">
         <div className="flex items-center space-x-6 text-[10px] font-mono whitespace-nowrap overflow-x-auto no-scrollbar w-full">
-          <span className="text-slate-500">NIFTY <span className="text-green-400">22,456.30 (+0.42%)</span></span>
-          <span className="text-slate-500">BANK NIFTY <span className="text-green-400">48,789.55 (+0.68%)</span></span>
-          <span className="text-slate-500">SENSEX <span className="text-green-400">73,890.25 (+0.38%)</span></span>
-          <span className="text-slate-500">INDIA VIX <span className="text-yellow-400">14.25 (-2.1%)</span></span>
-          <span className="text-slate-500">USD/INR <span className="text-red-400">83.42 (+0.12%)</span></span>
-          <span className="text-slate-500">GOLD <span className="text-green-400">₹68,450/10g (+0.55%)</span></span>
+          <span className="text-slate-500 flex items-center space-x-1">
+            <div className={`w-1.5 h-1.5 rounded-full ${dataSource === 'yahoo_live' ? 'bg-green-500' : 'bg-yellow-500'}`} />
+            <span>{symbol.replace('.NS', '')}</span>
+            {lastCandle && (
+              <><span className="text-white">{formatCurrency(lastCandle.close, useINR)}</span>
+              <span className={dailyChange >= 0 ? 'text-green-400' : 'text-red-400'}>{formatPercent(dailyChange)}</span></>
+            )}
+          </span>
+          <span className="text-slate-600">|</span>
+          <span className="text-slate-500">{darvasData ? `${darvasData.boxes.length} boxes · ${darvasData.metrics.totalTrades} trades · ${formatPercent(darvasData.metrics.winRate)} win rate` : 'Load data...'}</span>
+          <span className="text-slate-600">|</span>
+          <span className="text-slate-500">
+            {dataSource === 'yahoo_live' 
+              ? '📡 Yahoo Finance LIVE' 
+              : '⚠ SIMULATED (CORS blocked — run npm run dev for live data)'}
+          </span>
         </div>
       </footer>
     </div>
+  );
+}
+
+// ====== Scanner Row Component ======
+
+function ScannerRow({ result, index, onSelect }: { result: ScannerResult; index: number; onSelect: () => void }) {
+  const signalColors: Record<string, string> = {
+    BREAKOUT: 'text-green-500',
+    BREAKDOWN: 'text-red-500',
+    BOX_FORMED: 'text-blue-400',
+    WATCHING: 'text-yellow-500',
+    NONE: 'text-slate-600',
+  };
+  
+  const signalBg: Record<string, string> = {
+    BREAKOUT: 'bg-green-500/20',
+    BREAKDOWN: 'bg-red-500/20',
+    BOX_FORMED: 'bg-blue-500/20',
+    WATCHING: 'bg-yellow-500/20',
+    NONE: 'bg-slate-800/50',
+  };
+
+  const signalLabel: Record<string, string> = {
+    BREAKOUT: '💥 BREAKOUT',
+    BREAKDOWN: '🔴 BREAKDOWN',
+    BOX_FORMED: '🔵 BOX FORMED',
+    WATCHING: '👀 WATCHING',
+    NONE: '—',
+  };
+
+  return (
+    <button
+      onClick={onSelect}
+      className={`w-full flex text-[11px] px-3 py-2 rounded hover:bg-slate-800/50 transition-colors ${
+        index % 2 === 0 ? 'bg-slate-800/20' : ''
+      }`}
+    >
+      <div className="w-[140px] shrink-0 text-left flex items-center space-x-2">
+        <span className="text-white font-bold truncate">{result.name}</span>
+      </div>
+      <div className="w-[80px] shrink-0 text-right text-white font-mono">
+        {result.currentPrice > 0 ? formatCurrency(result.currentPrice, true).replace('₹', '') : '—'}
+      </div>
+      <div className="w-[60px] shrink-0 text-center text-slate-400">
+        {result.boxes}
+      </div>
+      <div className="w-[70px] shrink-0 text-center text-slate-400 font-mono text-[10px]">
+        {result.activeBox ? `${result.activeBox.height.toFixed(1)}%` : '—'}
+      </div>
+      <div className="w-[90px] shrink-0 text-center">
+        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${signalBg[result.signal]} ${signalColors[result.signal]}`}>
+          {signalLabel[result.signal]}
+        </span>
+      </div>
+      <div className="w-[50px] shrink-0 text-center">
+        <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden mt-1">
+          <div
+            className={`h-full rounded-full ${
+              result.signal === 'BREAKOUT' ? 'bg-green-500' :
+              result.signal === 'BREAKDOWN' ? 'bg-red-500' :
+              result.signal === 'BOX_FORMED' ? 'bg-blue-500' : 'bg-slate-600'
+            }`}
+            style={{ width: `${result.signalStrength}%` }}
+          />
+        </div>
+      </div>
+      <div className="w-[50px] shrink-0 text-right text-slate-400 font-mono">
+        {result.volumeSurge.toFixed(1)}x
+      </div>
+      <div className="w-[50px] shrink-0 text-right font-mono">
+        <span className={result.winRate >= 50 ? 'text-green-500' : 'text-red-400'}>
+          {result.winRate.toFixed(0)}%
+        </span>
+      </div>
+      <div className="flex-1 text-right text-[9px] text-slate-600">
+        {result.source === 'yahoo_live' ? '📡 LIVE' : result.source === 'error' ? '❌' : '⚠ SIM'}
+      </div>
+    </button>
   );
 }
 
@@ -474,10 +832,7 @@ function ExecutionLog({ trades, symbol, formatCurrency: fc }: {
         <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold flex items-center space-x-1">
           <BarChart3 className="w-2.5 h-2.5" />
           <span>Trade Execution Log</span>
-        </span>
-        <span className="text-[9px] text-blue-500 hover:text-blue-400 cursor-pointer transition-colors flex items-center space-x-1">
-          <Download className="w-2.5 h-2.5" />
-          <span>Export CSV</span>
+          <span className="text-slate-600 font-normal">({trades.length} trades)</span>
         </span>
       </div>
       <div className="space-y-1 font-mono text-[10px] overflow-y-auto custom-scrollbar flex-1 pr-1">
