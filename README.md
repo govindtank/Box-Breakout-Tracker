@@ -290,3 +290,4 @@ Attribution appreciated but not required.
 ---
 
 **Made with ❤️ for Indian traders using the Darvas Box methodology**
+ 
