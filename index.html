@@ -3,11 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Darvas Box Breakout Tracker</title>
+    <meta name="description" content="Darvas Box Breakout Tracker - Real-time trading dashboard for NSE stocks using Darvas Box strategy with live charting, backtesting, and performance analytics." />
+    <meta name="theme-color" content="#0B0E14" />
+    <title>Darvas Box Breakout Tracker | Trading Dashboard</title>
+    
+    <!-- Preload critical assets -->
+    <link rel="preload" href="/src/main.tsx" as="script" />
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📊</text></svg>" />
+    
+    <!-- Preconnect to external APIs -->
+    <link rel="preconnect" href="https://query1.finance.yahoo.com" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, ReactNode } from 'react';
 import { fetchIndianStockData } from './lib/marketData';
 import { calculateDarvasStrategy, Candle, Trade, BacktestMetrics } from './lib/darvas';
 import { TradingChart } from './components/Chart';
@@ -19,7 +19,7 @@ type TabId = 'terminal' | 'explorer' | 'academy' | 'alerts' | 'settings';
 interface Tab {
   id: TabId;
   label: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
 }
 
 const TABS: Tab[] = [
@@ -554,7 +554,7 @@ function SettingsPanel({ settings: _ }: { settings: AppSettings }) {
   );
 }
 
-function SettingSection({ title, children }: { title: string; children: React.ReactNode }) {
+function SettingSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
       <h3 className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-2">{title}</h3>
@@ -565,7 +565,7 @@ function SettingSection({ title, children }: { title: string; children: React.Re
   );
 }
 
-function SettingRow({ label, control }: { label: string; control: React.ReactNode }) {
+function SettingRow({ label, control }: { label: string; control: ReactNode }) {
   return (
     <div className="flex items-center justify-between px-3 py-2.5">
       <span className="text-xs text-slate-300">{label}</span>

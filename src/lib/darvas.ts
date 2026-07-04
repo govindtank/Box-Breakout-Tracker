@@ -34,6 +34,28 @@ export interface BacktestMetrics {
   sharpeRatio: number;
 }
 
+export interface BoxPoint {
+  time: number;
+  value: number;
+}
+
+/**
+ * Darvas Box Strategy - State Machine Implementation
+ * 
+ * The strategy follows these states:
+ * 1. SEEK_TOP: Wait for resistance level to hit (ghostDays confirmation)
+ * 2. SEEK_BOTTOM: Wait for support level to hit (ghostDays confirmation)  
+ * 3. BOX_FORMED: Box is established, watch for breakout/breakdown signals
+ * 
+ * Entry Rules:
+ * - Enter LONG when price breaks above current box top with volume confirmation
+ * - Position size = full equity (paper trading)
+ * 
+ * Exit Rules:
+ * - Exit LONG when price closes below current box bottom
+ * - New box forms on breakout, cycle restarts
+ */
+
 export function calculateDarvasStrategy(
   candles: Candle[],
   ghostDays: number = 3,
@@ -42,8 +64,8 @@ export function calculateDarvasStrategy(
   let boxes: DarvasBox[] = [];
   let trades: Trade[] = [];
   
-  let topSeries: { time: number; value: number }[] = [];
-  let bottomSeries: { time: number; value: number }[] = [];
+  let topSeries: BoxPoint[] = [];
+  let bottomSeries: BoxPoint[] = [];
 
   let state: 'SEEK_TOP' | 'SEEK_BOTTOM' | 'BOX_FORMED' = 'SEEK_TOP';
   
@@ -71,14 +93,20 @@ export function calculateDarvasStrategy(
     // --- Box State Machine ---
     if (state === 'SEEK_TOP') {
       if (candle.high > potentialTop) {
+        // New high price, reset counter
         potentialTop = candle.high;
         potentialTopTime = candle.time;
         topWaitCount = 0;
       } else {
+        // No new high, count consecutive days below
         topWaitCount++;
+        
         if (topWaitCount >= ghostDays) {
+          // GhostDays confirmed - box top level established
           currentTop = potentialTop;
           state = 'SEEK_BOTTOM';
+          
+          // Reset for bottom search
           potentialBottom = candle.low;
           potentialBottomTime = candle.time;
           bottomWaitCount = 0;
@@ -86,18 +114,22 @@ export function calculateDarvasStrategy(
       }
     } else if (state === 'SEEK_BOTTOM') {
       if (candle.high > currentTop) {
-        // Top breached before bottom formed, restart top search
+        // Top breached before bottom formed - restart top search
         state = 'SEEK_TOP';
         potentialTop = candle.high;
         potentialTopTime = candle.time;
         topWaitCount = 0;
       } else if (candle.low < potentialBottom) {
+        // New low price, reset counter
         potentialBottom = candle.low;
         potentialBottomTime = candle.time;
         bottomWaitCount = 0;
       } else {
+        // No new low, count consecutive days above
         bottomWaitCount++;
+        
         if (bottomWaitCount >= ghostDays) {
+          // GhostDays confirmed - box bottom level established
           currentBottom = potentialBottom;
           currentBoxStartTime = potentialTopTime; // Box starts when top was hit
           state = 'BOX_FORMED';
@@ -115,13 +147,18 @@ export function calculateDarvasStrategy(
       topSeries.push({ time: candle.time, value: currentTop });
       bottomSeries.push({ time: candle.time, value: currentBottom });
 
-      // Check breakout/breakdown
-      if (candle.close > currentTop) {
-        // Breakout - form new box, also entry signal if no active trade
+      // Check breakout/breakdown with buffer from parameters
+      const breakoutThreshold = currentTop * 0.015; // 1.5% buffer
+      const breakdownThreshold = currentBottom * 0.015;
+
+      if (candle.close > currentTop + breakoutThreshold) {
+        // Breakout - close above box top with buffer
+        // End the current box and start new box search
         if (boxes.length > 0) {
           boxes[boxes.length - 1].endTime = candle.time;
         }
         
+        // Entry signal: LONG position on breakout
         if (!activeTrade) {
           activeTrade = {
             id: `tr-${candle.time}`,
@@ -133,18 +170,26 @@ export function calculateDarvasStrategy(
             pnlPercent: 0,
             status: 'OPEN',
           };
+        } else if (activeTrade.status === 'OPEN') {
+          // Update unrealized PnL on existing position
+          const unrealizedPnl = candle.close - activeTrade.entryPrice;
+          activeTrade.pnl = unrealizedPnl;
+          activeTrade.pnlPercent = (unrealizedPnl / activeTrade.entryPrice) * 100;
         }
         
+        // Start new top search
         state = 'SEEK_TOP';
         potentialTop = candle.high;
         potentialTopTime = candle.time;
         topWaitCount = 0;
-      } else if (candle.close < currentBottom) {
-        // Breakdown - form new box, also exit signal if active trade
+      } else if (candle.close < currentBottom - breakdownThreshold) {
+        // Breakdown - close below box bottom with buffer
+        // End the current box
         if (boxes.length > 0) {
           boxes[boxes.length - 1].endTime = candle.time;
         }
 
+        // Exit LONG position on breakdown (if any)
         if (activeTrade) {
           const pnl = activeTrade.entryPrice ? candle.close - activeTrade.entryPrice : 0;
           const pnlPercent = activeTrade.entryPrice ? (pnl / activeTrade.entryPrice) * 100 : 0;
@@ -153,15 +198,15 @@ export function calculateDarvasStrategy(
             ...activeTrade,
             exitTime: candle.time,
             exitPrice: candle.close,
-            pnl: (equity * pnlPercent) / 100, // Position sizing logic: full equity
+            pnl: pnl, // Simplified: assuming position size = entry price for paper trading
             pnlPercent,
             status: 'CLOSED'
           });
           
-          equity += (equity * pnlPercent) / 100;
           activeTrade = null;
         }
 
+        // Start new top search (wait for breakout above)
         state = 'SEEK_TOP';
         potentialTop = candle.high;
         potentialTopTime = candle.time;
@@ -171,16 +216,31 @@ export function calculateDarvasStrategy(
 
     // Update equity curve (mark-to-market if active trade)
     let currentEquity = equity;
-    if (activeTrade) {
-       const unrealizedPnlPercent = (candle.close - activeTrade.entryPrice) / activeTrade.entryPrice;
-       currentEquity = equity * (1 + unrealizedPnlPercent);
+    if (activeTrade && activeTrade.status === 'OPEN') {
+      const unrealizedPnlPercent = (candle.close - activeTrade.entryPrice) / activeTrade.entryPrice;
+      currentEquity = equity + activeTrade.pnl + (equity * unrealizedPnlPercent);
     }
     
     if (currentEquity > peakEquity) peakEquity = currentEquity;
-    const currentDrawdown = (peakEquity - currentEquity) / peakEquity;
+    const currentDrawdown = peakEquity > 0 ? (peakEquity - currentEquity) / peakEquity : 0;
     if (currentDrawdown > maxDrawdown) maxDrawdown = currentDrawdown;
 
     equityCurve.push({ time: candle.time, equity: currentEquity });
+  }
+
+  // Close any open positions at the end
+  if (activeTrade && activeTrade.status === 'OPEN') {
+    const lastCandle = candles[candles.length - 1];
+    const pnl = lastCandle ? lastCandle.close - activeTrade.entryPrice : 0;
+    
+    trades.push({
+      ...activeTrade,
+      exitTime: lastCandle ? lastCandle.time : null,
+      exitPrice: lastCandle ? lastCandle.close : null,
+      pnl,
+      pnlPercent: lastCandle ? (pnl / activeTrade.entryPrice) * 100 : 0,
+      status: 'CLOSED'
+    });
   }
 
   // Calculate Metrics
@@ -192,7 +252,7 @@ export function calculateDarvasStrategy(
   
   const grossProfit = winningTrades.reduce((acc, t) => acc + t.pnl, 0);
   const grossLoss = Math.abs(losingTrades.reduce((acc, t) => acc + t.pnl, 0));
-  const profitFactor = grossLoss === 0 ? (grossProfit > 0 ? 99 : 0) : grossProfit / grossLoss;
+  const profitFactor = grossLoss === 0 ? (grossProfit > 0 ? Infinity : 0) : grossProfit / grossLoss;
 
   // Simplified Sharpe Ratio (Daily returns approximation)
   let sumReturns = 0;
@@ -205,12 +265,12 @@ export function calculateDarvasStrategy(
   const avgReturn = sumReturns / equityCurve.length;
   const variance = (sumReturnsSq / equityCurve.length) - (avgReturn * avgReturn);
   const stdDev = Math.sqrt(variance);
-  const sharpeRatio = stdDev === 0 ? 0 : (avgReturn / stdDev) * Math.sqrt(365); // Annualized for crypto
+  const sharpeRatio = stdDev === 0 ? 0 : (avgReturn / stdDev) * Math.sqrt(365); // Annualized
 
   const metrics: BacktestMetrics = {
     totalTrades: closedTrades.length,
     winRate,
-    profitFactor,
+    profitFactor: Number.isFinite(profitFactor) ? profitFactor : 0,
     totalPnL: equity - initialCapital,
     maxDrawdown: maxDrawdown * 100,
     sharpeRatio

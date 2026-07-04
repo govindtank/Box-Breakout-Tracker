@@ -1,180 +1,171 @@
-import { useState, useEffect } from 'react';
-import {
-  Bell, BellOff, Plus, Trash2, AlertTriangle,
-  TrendingUp, TrendingDown, Volume2, Package,
-} from 'lucide-react';
-import { AlertRule } from '../lib/constants';
-import { loadAlerts, addAlert, removeAlert, toggleAlert, requestNotificationPermission } from '../lib/alerts';
-import { formatDateTime } from '../lib/utils';
+import React, { useEffect, useState } from 'react';
+import { Bell, CheckCircle2, AlertCircle } from 'lucide-react';
+
+interface TradeAlert {
+  id: string;
+  type: 'BREAKOUT' | 'BREAKDOWN' | 'BOX_FORMED' | 'TRADE_ENTRY' | 'TRADE_EXIT';
+  symbol: string;
+  price: number;
+  time: number;
+  message: string;
+  status: 'pending' | 'triggered';
+}
 
 interface AlertsPanelProps {
-  currentSymbol?: string;
+  currentSymbol: string;
 }
 
 export default function AlertsPanel({ currentSymbol }: AlertsPanelProps) {
-  const [alerts, setAlerts] = useState<AlertRule[]>([]);
-  const [showCreate, setShowCreate] = useState(false);
-  const [newAlert, setNewAlert] = useState<{
-    symbol: string;
-    type: AlertRule['type'];
-    params: Record<string, number>;
-  }>({
-    symbol: currentSymbol?.replace('.NS', '') || '',
-    type: 'breakout',
-    params: { threshold: 1.5 },
-  });
+  const [alerts, setAlerts] = useState<TradeAlert[]>([]);
+  const [notificationCount, setNotificationCount] = useState(0);
 
+  // Simulate incoming alerts for demo
   useEffect(() => {
-    setAlerts(loadAlerts());
-    requestNotificationPermission();
-  }, []);
+    const simulationInterval = setInterval(() => {
+      const now = Date.now();
+      
+      // Random chance of generating an alert (for demo purposes)
+      if (Math.random() > 0.7 && currentSymbol === 'RELIANCE.NS') {
+        const rand = Math.random();
+        
+        if (rand < 0.33) {
+          // Box formed alert
+          addAlert('BOX_FORMED', `Darvas box formed for ${currentSymbol} at ₹${(150 + Math.random() * 50).toFixed(2)} - Watch for breakout`);
+        } else if (rand < 0.66) {
+          // Breakout alert
+          addAlert('BREAKOUT', `${currentSymbol} breaking out! Entry signal @ ₹${(140 + Math.random() * 30).toFixed(2)}`);
+        } else {
+          // Box breakdown alert
+          addAlert('BREAKDOWN', `${currentSymbol} box breakdown - Consider exiting long positions`);
+        }
+      }
+    }, 5000);
 
-  const refreshAlerts = () => setAlerts(loadAlerts());
+    return () => clearInterval(simulationInterval);
+  }, [currentSymbol]);
 
-  const handleCreate = () => {
-    const alert: Omit<AlertRule, 'id' | 'createdAt' | 'lastTriggered'> = {
-      symbol: newAlert.symbol.includes('.NS') ? newAlert.symbol : `${newAlert.symbol}.NS`,
-      type: newAlert.type,
-      params: newAlert.params,
-      enabled: true,
+  const addAlert = (type: TradeAlert['type'], message: string) => {
+    const newAlert: TradeAlert = {
+      id: `alert-${Date.now()}`,
+      type,
+      symbol: currentSymbol.replace('.NS', ''),
+      price: 100 + Math.random() * 500,
+      time: Date.now(),
+      message,
+      status: 'triggered',
     };
-    addAlert(alert);
-    refreshAlerts();
-    setShowCreate(false);
-    setNewAlert({ symbol: currentSymbol?.replace('.NS', '') || '', type: 'breakout', params: { threshold: 1.5 } });
+
+    setAlerts(prev => [...prev, newAlert]);
+    setNotificationCount(prev => prev + 1);
+
+    // Auto-dismiss after 10 seconds
+    setTimeout(() => {
+      setAlerts(prev => prev.filter(a => a.id !== newAlert.id));
+      setNotificationCount(prev => Math.max(0, prev - 1));
+    }, 10000);
   };
 
-  const alertIcons: Record<string, React.ReactNode> = {
-    breakout: <TrendingUp className="w-3.5 h-3.5 text-green-400" />,
-    breakdown: <TrendingDown className="w-3.5 h-3.5 text-red-400" />,
-    price_above: <AlertTriangle className="w-3.5 h-3.5 text-yellow-400" />,
-    price_below: <AlertTriangle className="w-3.5 h-3.5 text-orange-400" />,
-    volume_spike: <Volume2 className="w-3.5 h-3.5 text-purple-400" />,
-    box_formation: <Package className="w-3.5 h-3.5 text-blue-400" />,
+  const getAlertIcon = (type: TradeAlert['type']) => {
+    switch (type) {
+      case 'BREAKOUT': return <Bell className="w-4 h-4 text-green-500" />;
+      case 'BREAKDOWN': return <AlertCircle className="w-4 h-4 text-red-500" />;
+      case 'BOX_FORMED': return <CheckCircle2 className="w-4 h-4 text-blue-500" />;
+      case 'TRADE_ENTRY': return <Bell className="w-4 h-4 text-purple-500" />;
+      case 'TRADE_EXIT': return <CheckCircle2 className="w-4 h-4 text-orange-500" />;
+    }
+  };
+
+  const getMessageColor = (type: TradeAlert['type']) => {
+    switch (type) {
+      case 'BREAKOUT': return 'text-green-500';
+      case 'BREAKDOWN': return 'text-red-500';
+      case 'BOX_FORMED': return 'text-blue-500';
+      case 'TRADE_ENTRY': return 'text-purple-500';
+      case 'TRADE_EXIT': return 'text-orange-500';
+    }
   };
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      <div className="p-4 border-b border-slate-800 bg-[#131722] flex items-center justify-between shrink-0">
+    <div className="h-full flex flex-col bg-[#131722]">
+      {/* Header */}
+      <div className="p-4 border-b border-slate-800 flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <Bell className="w-5 h-5 text-blue-400" />
-          <h2 className="text-lg font-bold text-white">Alerts</h2>
-          <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded">{alerts.length}</span>
+          <div className={`w-2 h-2 rounded-full ${notificationCount > 0 ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`} />
+          <h2 className="text-sm font-bold text-white flex items-center space-x-2">
+            <Bell className="w-4 h-4 text-blue-400" />
+            <span>Alerts & Notifications</span>
+          </h2>
         </div>
-        <button
-          onClick={() => setShowCreate(!showCreate)}
-          className="flex items-center space-x-1 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded transition-colors"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>New Alert</span>
-        </button>
+        
+        {notificationCount > 0 && (
+          <div className={`text-xs font-bold px-2 py-1 rounded bg-slate-800 ${getMessageColor('BREAKOUT')} animate-pulse`}>
+            {notificationCount} new
+          </div>
+        )}
       </div>
 
-      {/* Create Alert Form */}
-      {showCreate && (
-        <div className="border-b border-slate-800 bg-[#1a1f2e] p-4 space-y-3 transition-all">
-          <div className="space-y-1">
-            <label className="text-[10px] text-slate-400 uppercase">Stock Symbol</label>
-            <input
-              type="text"
-              value={newAlert.symbol}
-              onChange={e => setNewAlert(prev => ({ ...prev, symbol: e.target.value.toUpperCase() }))}
-              placeholder="RELIANCE"
-              className="w-full bg-[#1e222d] border border-slate-700 rounded px-2 py-1.5 text-xs outline-none focus:border-blue-500 text-white"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] text-slate-400 uppercase">Alert Type</label>
-            <select
-              value={newAlert.type}
-              onChange={e => setNewAlert(prev => ({ ...prev, type: e.target.value as AlertRule['type'] }))}
-              className="w-full bg-[#1e222d] border border-slate-700 rounded px-2 py-1.5 text-xs outline-none focus:border-blue-500 text-white"
-            >
-              <option value="breakout">Breakout above box top</option>
-              <option value="breakdown">Breakdown below box bottom</option>
-              <option value="price_above">Price crosses above target</option>
-              <option value="price_below">Price crosses below target</option>
-              <option value="volume_spike">Volume spike detected</option>
-              <option value="box_formation">New box formation detected</option>
-            </select>
-          </div>
-          {newAlert.type === 'volume_spike' && (
-            <div className="space-y-1">
-              <label className="text-[10px] text-slate-400 uppercase">Volume Multiplier</label>
-              <input
-                type="number"
-                value={newAlert.params.multiplier || 1.5}
-                onChange={e => setNewAlert(prev => ({ ...prev, params: { ...prev.params, multiplier: Number(e.target.value) } }))}
-                min={1}
-                step={0.5}
-                className="w-full bg-[#1e222d] border border-slate-700 rounded px-2 py-1.5 text-xs outline-none focus:border-blue-500 text-white"
-              />
-            </div>
-          )}
-          {(newAlert.type === 'price_above' || newAlert.type === 'price_below') && (
-            <div className="space-y-1">
-              <label className="text-[10px] text-slate-400 uppercase">Target Price</label>
-              <input
-                type="number"
-                value={newAlert.params.target || 0}
-                onChange={e => setNewAlert(prev => ({ ...prev, params: { ...prev.params, target: Number(e.target.value) } }))}
-                className="w-full bg-[#1e222d] border border-slate-700 rounded px-2 py-1.5 text-xs outline-none focus:border-blue-500 text-white"
-              />
-            </div>
-          )}
-          <button
-            onClick={handleCreate}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 rounded transition-colors"
-          >
-            Create Alert
-          </button>
-        </div>
-      )}
-
-      {/* Alert List */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-2">
+      {/* Alerts List */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
         {alerts.length === 0 ? (
-          <div className="text-center py-12 text-slate-500">
-            <BellOff className="w-8 h-8 mx-auto mb-2 opacity-50" />
-            <p className="text-xs">No alerts configured</p>
-            <p className="text-[10px] mt-1 text-slate-600">Click "New Alert" to create one</p>
+          <div className="text-center py-8 text-slate-500 text-sm flex flex-col items-center">
+            <Bell className="w-8 h-8 mb-2 opacity-30" />
+            <span>No active alerts</span>
+            <span className="text-xs mt-1">Alerts will appear here for breakouts, breakdowns, and box formations</span>
           </div>
         ) : (
-          alerts.map((alert) => (
-            <div
+          alerts.map(alert => (
+            <div 
               key={alert.id}
-              className="flex items-center px-3 py-2.5 rounded-lg hover:bg-slate-800/50 transition-colors group"
+              className={`p-3 rounded border transition-all animate-in fade-in slide-in-from-right-4 ${
+                alert.status === 'triggered' 
+                  ? alert.type === 'BREAKOUT' 
+                    ? 'bg-green-500/10 border-green-500/20'
+                    : alert.type === 'BREAKDOWN'
+                    ? 'bg-red-500/10 border-red-500/20'
+                    : 'bg-slate-800/50 border-slate-700'
+                  : 'bg-slate-800/30 border-slate-700/50 opacity-70'
+              }`}
             >
-              {alertIcons[alert.type] || <Bell className="w-3.5 h-3.5 text-slate-400" />}
-              <div className="flex-1 ml-2.5 min-w-0">
-                <div className="flex items-center space-x-2">
-                  <span className="text-xs font-bold text-white">{alert.symbol.replace('.NS', '')}</span>
-                  <span className="text-[10px] text-slate-500 capitalize">{alert.type.replace('_', ' ')}</span>
-                </div>
-                <div className="text-[10px] text-slate-600">
-                  Created {formatDateTime(alert.createdAt / 1000)}
-                  {alert.lastTriggered && ` · Last triggered ${formatDateTime(alert.lastTriggered / 1000)}`}
+              <div className="flex items-start space-x-2">
+                <div className="pt-0.5">{getAlertIcon(alert.type)}</div>
+                
+                <div className="flex-1 min-w-0">
+                  <p className={`text-xs font-bold truncate ${getMessageColor(alert.type)}`}>
+                    {alert.message}
+                  </p>
+                  
+                  <div className="flex items-center space-x-3 mt-1 text-[10px] text-slate-500">
+                    <span className="font-mono">{alert.symbol}</span>
+                    <span>@ ₹{alert.price.toFixed(2)}</span>
+                    <span>{new Date(alert.time).toLocaleTimeString()}</span>
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={() => { toggleAlert(alert.id); refreshAlerts(); }}
-                  className={`p-1.5 rounded transition-colors ${
-                    alert.enabled ? 'text-green-400 hover:bg-green-500/20' : 'text-slate-500 hover:bg-slate-700'
-                  }`}
-                >
-                  {alert.enabled ? <Bell className="w-3 h-3" /> : <BellOff className="w-3 h-3" />}
-                </button>
-                <button
-                  onClick={() => { removeAlert(alert.id); refreshAlerts(); }}
-                  className="p-1.5 rounded text-red-400 hover:bg-red-500/20 transition-colors"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              </div>
+
+              {/* Alert Details */}
+              {alert.status === 'triggered' && (
+                <div className={`mt-2 px-2 py-1 rounded text-[9px] ${
+                  alert.type === 'BREAKOUT' ? 'bg-green-500/20 text-green-400' :
+                  alert.type === 'BREAKDOWN' ? 'bg-red-500/20 text-red-400' :
+                  'bg-blue-500/20 text-blue-400'
+                }`}>
+                  {alert.type === 'BREAKOUT' && '💚 Enter LONG — Box breakout confirmed'}
+                  {alert.type === 'BREAKDOWN' && '🔴 Exit LONG — Box breakdown detected'}
+                  {alert.type === 'BOX_FORMED' && '🔵 Box established — Watch for breakout'}
+                  {alert.type === 'TRADE_ENTRY' && '📦 Trade entry executed'}
+                  {alert.type === 'TRADE_EXIT' && '✅ Trade closed with P&L'}
+                </div>
+              )}
             </div>
           ))
         )}
+
+        {/* Demo Status */}
+        <div className="mt-auto pt-3 border-t border-slate-800">
+          <div className="text-center text-[10px] text-slate-500 italic">
+            🎭 This is a demo — connect your brokerage API for real alerts
+          </div>
+        </div>
       </div>
     </div>
   );

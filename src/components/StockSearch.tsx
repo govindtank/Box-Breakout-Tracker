@@ -1,198 +1,158 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Search, TrendingUp, TrendingDown, Star, StarOff } from 'lucide-react';
-import { POPULAR_STOCKS, SECTORS } from '../lib/constants';
-import { searchStocks, StockInfo } from '../lib/marketData';
-import { formatCurrency, formatPercent, formatVolume } from '../lib/utils';
+import React from 'react';
+import { Search, TrendingUp } from 'lucide-react';
 
 interface StockSearchProps {
   onSelectStock: (symbol: string) => void;
-  currentSymbol?: string;
+  currentSymbol: string;
 }
 
 export default function StockSearch({ onSelectStock, currentSymbol }: StockSearchProps) {
-  const [query, setQuery] = useState('');
-  const [selectedSector, setSelectedSector] = useState('All');
-  const [results, setResults] = useState<(StockInfo & { fromList: boolean })[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [favorites, setFavorites] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('darvas_favorites') || '[]'); }
-    catch { return []; }
-  });
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [filteredStocks, setFilteredStocks] = React.useState<any[]>([]);
+  
+  // NSE stock universe with search categories
+  const STOCKS = [
+    { symbol: 'RELIANCE.NS', name: 'Reliance Industries', category: 'Energy' },
+    { symbol: 'TCS.NS', name: 'Tata Consultancy Services', category: 'Technology' },
+    { symbol: 'HDFCBANK.NS', name: 'HDFC Bank', category: 'Financial Services' },
+    { symbol: 'INFY.NS', name: 'Infosys', category: 'Technology' },
+    { symbol: 'ICICIBANK.NS', name: 'ICICI Bank', category: 'Financial Services' },
+    { symbol: 'SBIN.NS', name: 'State Bank of India', category: 'Financial Services' },
+    { symbol: 'BHARTIARTL.NS', name: 'Bharti Airtel', category: 'Communication Services' },
+    { symbol: 'ITC.NS', name: 'ITC', category: 'Consumer Defensive' },
+    { symbol: 'TATAMOTORS.NS', name: 'Tata Motors', category: 'Automotive' },
+    { symbol: 'LT.NS', name: 'Larsen & Toubro', category: 'Industrials' },
+    { symbol: 'AXISBANK.NS', name: 'Axis Bank', category: 'Financial Services' },
+    { symbol: 'MARUTI.NS', name: 'Maruti Suzuki', category: 'Automotive' },
+    { symbol: 'ADANIENT.NS', name: 'Adani Enterprises', category: 'Industrial Conglomerates' },
+    { symbol: 'JSWSTEEL.NS', name: 'JSW Steel', category: 'Steel' },
+    { symbol: 'BAJFINANCE.NS', name: 'Bajaj Finance', category: 'Financial Services' },
+  ];
 
-  useEffect(() => {
-    localStorage.setItem('darvas_favorites', JSON.stringify(favorites));
-  }, [favorites]);
+  const categories = ['All', ...Array.from(new Set(STOCKS.map(s => s.category)))];
 
-  useEffect(() => {
-    const loadResults = async () => {
-      if (query.trim().length < 2) {
-        const filtered = selectedSector === 'All'
-          ? POPULAR_STOCKS
-          : POPULAR_STOCKS.filter(s => s.sector === selectedSector);
-        setResults(filtered.map(s => ({
-          symbol: s.symbol,
-          name: s.name,
-          price: 500 + Math.random() * 3000,
-          change: (Math.random() - 0.5) * 50,
-          changePercent: (Math.random() - 0.5) * 4,
-          volume: Math.floor(100000 + Math.random() * 10000000),
-          high52w: 1000 + Math.random() * 4000,
-          low52w: 200 + Math.random() * 800,
-          marketCap: ['₹10,000Cr', '₹50,000Cr', '₹1,00,000Cr', '₹5,00,000Cr', '₹10,00,000Cr'][Math.floor(Math.random() * 5)],
-          sector: s.sector,
-          fromList: true,
-        })));
-        return;
-      }
+  React.useEffect(() => {
+    if (searchQuery.trim() === '') {
+      setFilteredStocks(STOCKS);
+    } else {
+      const query = searchQuery.toLowerCase();
+      setFilteredStocks(STOCKS.filter(stock => 
+        stock.name.toLowerCase().includes(query) ||
+        stock.symbol.toLowerCase().includes(query)
+      ));
+    }
+  }, [searchQuery]);
 
-      setIsSearching(true);
-      try {
-        const data = await searchStocks(query);
-        setResults(data.map(d => ({ ...d, fromList: true })));
-      } finally {
-        setIsSearching(false);
-      }
-    };
-    loadResults();
-  }, [query, selectedSector]);
-
-  const toggleFavorite = (symbol: string) => {
-    setFavorites(prev =>
-      prev.includes(symbol) ? prev.filter(s => s !== symbol) : [...prev, symbol]
-    );
+  const handleSelect = (symbol: string) => {
+    setSearchQuery('');
+    onSelectStock(symbol);
   };
 
-  const grouped = useMemo(() => {
-    if (query.trim().length >= 2) return null;
-    const groups: Record<string, typeof results> = {};
-    results.forEach(r => {
-      if (!groups[r.sector]) groups[r.sector] = [];
-      groups[r.sector].push(r);
-    });
-    return groups;
-  }, [results, query]);
-
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      <div className="p-4 border-b border-slate-800 bg-[#131722] space-y-3 shrink-0">
+    <div className="flex flex-col h-full bg-[#1e222d]">
+      {/* Header */}
+      <div className="p-4 border-b border-slate-700">
+        <h2 className="text-sm font-bold text-white flex items-center space-x-2">
+          <Search className="w-4 h-4 text-blue-400" />
+          <span>Stock Explorer</span>
+        </h2>
+      </div>
+
+      {/* Search Bar */}
+      <div className="p-3 border-b border-slate-700">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
           <input
             type="text"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Search Indian stocks (e.g., RELIANCE, TCS, HDFCBANK)..."
-            className="w-full bg-[#1e222d] border border-slate-700 rounded-lg pl-10 pr-4 py-2.5 text-sm outline-none focus:border-blue-500 text-white placeholder-slate-500"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search stocks by name or symbol..."
+            className="w-full bg-[#131722] border border-slate-600 rounded px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-blue-500 outline-none"
           />
-        </div>
-        <div className="flex space-x-2 overflow-x-auto no-scrollbar pb-1">
-          {SECTORS.map(sector => (
+          {searchQuery && (
             <button
-              key={sector}
-              onClick={() => setSelectedSector(sector)}
-              className={`text-[10px] px-2.5 py-1 rounded-full border whitespace-nowrap transition-colors ${
-                selectedSector === sector
-                  ? 'bg-blue-500/20 text-blue-400 border-blue-500/40'
-                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-600'
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Category Filter */}
+      <div className="px-3 py-2 border-b border-slate-700">
+        <div className="flex space-x-2 overflow-x-auto no-scrollbar">
+          {categories.map(category => (
+            <button
+              key={category}
+              onClick={() => setSearchQuery('')}
+              className={`text-xs px-3 py-1 rounded-full whitespace-nowrap transition-colors ${
+                category === 'All' || searchQuery.trim() === '' && !filteredStocks.length 
+                  ? 'bg-blue-600 text-white' 
+                  : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
               }`}
             >
-              {sector}
+              {category}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
-        {isSearching ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      {/* Stock List */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-2">
+        {filteredStocks.length === 0 ? (
+          <div className="text-center py-8 text-slate-500 text-sm">
+            No stocks found matching "{searchQuery}"
           </div>
-        ) : grouped ? (
-          Object.entries(grouped).map(([sector, stocks]) => (
-            <div key={sector} className="p-2">
-              <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-slate-500 font-bold">
-                {sector} · {stocks.length} stocks
-              </div>
-              {stocks.map((stock) => (
-                <StockRow
-                  key={stock.symbol}
-                  stock={stock}
-                  isActive={currentSymbol === stock.symbol}
-                  isFavorite={favorites.includes(stock.symbol)}
-                  onSelect={() => onSelectStock(stock.symbol)}
-                  onToggleFavorite={() => toggleFavorite(stock.symbol)}
-                />
-              ))}
-            </div>
-          ))
         ) : (
-          <div className="p-2">
-            {results.length === 0 ? (
-              <div className="text-center py-12 text-slate-500 text-xs">
-                No stocks found matching "{query}"
-              </div>
-            ) : (
-              results.map(stock => (
-                <StockRow
-                  key={stock.symbol}
-                  stock={stock}
-                  isActive={currentSymbol === stock.symbol}
-                  isFavorite={favorites.includes(stock.symbol)}
-                  onSelect={() => onSelectStock(stock.symbol)}
-                  onToggleFavorite={() => toggleFavorite(stock.symbol)}
-                />
-              ))
-            )}
+          <div className="space-y-1">
+            {filteredStocks.map(stock => (
+              <button
+                key={stock.symbol}
+                onClick={() => handleSelect(stock.symbol)}
+                className={`w-full text-left p-3 rounded transition-colors ${
+                  currentSymbol === stock.symbol
+                    ? 'bg-blue-600/20 border border-blue-500/50'
+                    : 'hover:bg-slate-800/50 border border-transparent'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-white">{stock.name}</div>
+                    <div className="text-xs text-slate-400 font-mono">{stock.symbol}</div>
+                  </div>
+                  <div className="text-xs text-slate-500 px-2 py-1 bg-slate-800 rounded">
+                    {stock.category}
+                  </div>
+                </div>
+              </button>
+            ))}
           </div>
         )}
+
+        {/* Popular Picks Section */}
+        <div className="mt-4 p-3 border-t border-slate-700">
+          <h3 className="text-xs text-slate-500 font-bold uppercase tracking-widest mb-2 flex items-center space-x-1">
+            <TrendingUp className="w-3 h-3" />
+            <span>Popular Picks</span>
+          </h3>
+          <div className="space-y-1">
+            {STOCKS.slice(0, 4).map(stock => (
+              <button
+                key={stock.symbol}
+                onClick={() => handleSelect(stock.symbol)}
+                className={`w-full text-left p-2 rounded text-xs transition-colors ${
+                  currentSymbol === stock.symbol
+                    ? 'bg-blue-600/20 border border-blue-500/30'
+                    : 'hover:bg-slate-800/30 border border-transparent'
+                }`}
+              >
+                <span className="text-white">{stock.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
-  );
-}
-
-function StockRow({ stock, isActive, isFavorite, onSelect, onToggleFavorite }: {
-  stock: StockInfo & { fromList: boolean };
-  isActive: boolean;
-  isFavorite: boolean;
-  onSelect: () => void;
-  onToggleFavorite: () => void;
-}) {
-  return (
-    <button
-      onClick={onSelect}
-      className={`w-full text-left flex items-center px-3 py-2.5 rounded-lg transition-all group ${
-        isActive
-          ? 'bg-blue-500/15 border border-blue-500/30'
-          : 'hover:bg-slate-800/50 border border-transparent'
-      }`}
-    >
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center space-x-2">
-          <span className="text-sm font-bold text-white truncate">{stock.symbol.replace('.NS', '')}</span>
-          <span className="text-[10px] text-slate-500 truncate hidden sm:inline">{stock.name}</span>
-        </div>
-        <div className="flex items-center space-x-3 mt-0.5">
-          <span className="text-[10px] text-slate-500">{stock.sector}</span>
-          <span className="text-[10px] text-slate-500">Vol: {formatVolume(stock.volume)}</span>
-        </div>
-      </div>
-      <div className="text-right ml-3">
-        <div className="text-sm font-mono font-bold text-white">
-          {formatCurrency(stock.price, true)}
-        </div>
-        <div className={`text-[10px] font-mono flex items-center justify-end space-x-1 ${
-          stock.changePercent >= 0 ? 'text-green-500' : 'text-red-500'
-        }`}>
-          {stock.changePercent >= 0 ? <TrendingUp className="w-2.5 h-2.5" /> : <TrendingDown className="w-2.5 h-2.5" />}
-          <span>{formatPercent(stock.changePercent)}</span>
-        </div>
-      </div>
-      <button
-        onClick={(e) => { e.stopPropagation(); onToggleFavorite(); }}
-        className="ml-2 p-1.5 rounded hover:bg-slate-700 transition-colors opacity-0 group-hover:opacity-100"
-      >
-        {isFavorite ? <Star className="w-3.5 h-3.5 text-yellow-500" /> : <StarOff className="w-3.5 h-3.5 text-slate-500" />}
-      </button>
-    </button>
   );
 }

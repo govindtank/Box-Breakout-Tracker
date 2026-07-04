@@ -1,71 +1,94 @@
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+/**
+ * Utility functions for formatting and data manipulation
+ */
 
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-
-export function formatINR(value: number) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
-export function formatUSD(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(value);
-}
-
-export function formatCurrency(value: number, inINR: boolean = true) {
-  return inINR ? formatINR(value) : formatUSD(value);
-}
-
-export function formatPercent(value: number) {
-  const sign = value >= 0 ? '+' : '';
-  return `${sign}${value.toFixed(2)}%`;
-}
-
-export function formatLargeNumber(value: number): string {
-  if (value >= 1_00_00_000) { // 1 Cr+
-    return `${(value / 1_00_00_000).toFixed(2)}Cr`;
+export function formatCurrency(
+  value: number,
+  useINR: boolean = true
+): string {
+  if (useINR) {
+    return `₹${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  } else {
+    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
-  if (value >= 1_00_000) { // 1 Lac+
-    return `${(value / 1_00_000).toFixed(2)}L`;
+}
+
+export function formatPercent(
+  value: number,
+  showSign: boolean = true
+): string {
+  const formatted = (value * 100).toLocaleString('en-US', { 
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2 
+  });
+  
+  if (showSign) {
+    return value >= 0 ? `+${formatted}%` : `${formatted}%`;
   }
-  if (value >= 1_000) {
-    return `${(value / 1_000).toFixed(1)}K`;
-  }
-  return value.toFixed(0);
+  
+  return `${formatted}%`;
 }
 
 export function formatVolume(value: number): string {
-  if (value >= 1_00_00_000) {
-    return `${(value / 1_00_00_000).toFixed(2)} Cr`;
-  }
-  if (value >= 1_00_000) {
-    return `${(value / 1_00_000).toFixed(2)} L`;
-  }
-  return value.toLocaleString('en-IN');
+  const formatted = new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    compactDisplay: 'short'
+  }).format(value);
+  
+  return formatted.toUpperCase();
 }
 
 export function formatDate(timestamp: number): string {
-  return new Date(timestamp * 1000).toLocaleDateString('en-IN', {
-    day: '2-digit',
+  const date = new Date(timestamp * 1000);
+  return date.toLocaleDateString('en-US', {
     month: 'short',
-    year: 'numeric',
+    day: '2-digit',
+    year: 'numeric'
+  });
+}
+
+export function formatTime(timestamp: number): string {
+  const date = new Date(timestamp * 1000);
+  return date.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit'
   });
 }
 
 export function formatDateTime(timestamp: number): string {
-  return new Date(timestamp * 1000).toLocaleString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatDate(timestamp) + ' ' + formatTime(timestamp);
+}
+
+export function calculatePercentageChange(newVal: number, oldVal: number): number {
+  if (oldVal === 0) return 0;
+  return ((newVal - oldVal) / Math.abs(oldVal)) * 100;
+}
+
+export function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+export function getDayOfWeek(timestamp: number): number {
+  const date = new Date(timestamp * 1000);
+  return date.getDay(); // 0 = Sunday, 6 = Saturday
+}
+
+export function isWeekend(timestamp: number): boolean {
+  return getDayOfWeek(timestamp) === 0 || getDayOfWeek(timestamp) === 6;
+}
+
+export function debounce<T extends (...args: any[]) => any>(
+  fn: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  let timeoutId: NodeJS.Timeout | null = null;
+  
+  return function(...args: Parameters<T>) {
+    if (timeoutId) clearTimeout(timeoutId);
+    
+    timeoutId = setTimeout(() => {
+      fn(...args);
+      timeoutId = null;
+    }, delay);
+  };
 }
