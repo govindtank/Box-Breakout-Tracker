@@ -19,7 +19,26 @@ import pandas as pd
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-# ─── Config ────────────────────────────────────────────────────────────────
+# ─── Flask NaN/Infinity JSON Fix ─────────────────────────────────────────────
+
+from flask.json.provider import DefaultJSONProvider
+
+class SafeJSONProvider(DefaultJSONProvider):
+    def default(self, o):
+        if isinstance(o, (np.integer,)):
+            return int(o)
+        if isinstance(o, (np.floating,)):
+            return float(o)
+        if isinstance(o, (np.bool_,)):
+            return bool(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        return super().default(o)
+
+app = Flask(__name__)
+app.json_provider_class = SafeJSONProvider
+app.json = SafeJSONProvider(app)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 PORT = int(os.environ.get('BBT_API_PORT', 8082))
 CACHE_TTL = int(os.environ.get('BBT_CACHE_TTL', 300))  # 5 min default
@@ -32,11 +51,6 @@ logging.basicConfig(
     format='%(asctime)s [BBT-API] %(levelname)s %(message)s',
 )
 log = logging.getLogger('bbt-api')
-
-# ─── Flask App ─────────────────────────────────────────────────────────────
-
-app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # ─── NSE Stock Universe ────────────────────────────────────────────────────
 
@@ -414,7 +428,7 @@ def scanner():
                 'boxTop': round(box_top, 2),
                 'boxBottom': round(box_bottom, 2),
                 'boxRange': round(box_range, 2),
-                'isBreakout': is_breakout,
+                'isBreakout': bool(is_breakout),
                 'entryZoneLow': entry_zone_low,
                 'entryZoneHigh': round(box_top * 1.01, 2),
                 'stopLoss': stop_loss,
@@ -423,7 +437,7 @@ def scanner():
                 'riskPct': risk,
                 'rsi': round(rsi, 1),
                 'volumeRatio': round(volume_ratio, 2),
-                'uptrend': uptrend,
+                'uptrend': bool(uptrend),
                 'momentumProof': momentum_proofs,
                 'peRatio': info.get('pe'),
                 'marketCap': info.get('marketCap'),
