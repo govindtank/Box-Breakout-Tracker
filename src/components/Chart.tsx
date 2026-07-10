@@ -97,8 +97,14 @@ export function TradingChart({ candles, topSeriesData, bottomSeriesData, trades 
       lastValueVisible: false,
     });
 
-    // Prepare candlestick data for Darvas main candles - matching lightweight-charts CandlestickData format
-    const candlestickData = candles.map((c) => ({ time: c.time, value: { open: c.open, high: c.high, low: c.low, close: c.close } })) as any;
+    // Prepare candlestick data — flat format for CandlestickSeries
+    const candlestickData = candles.map((c) => ({ 
+      time: c.time as Time, 
+      open: c.open, 
+      high: c.high, 
+      low: c.low, 
+      close: c.close 
+    }));
 
     try {
       candleSeries.setData(candlestickData);
