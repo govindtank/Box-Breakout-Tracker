@@ -66,6 +66,10 @@ NSE_STOCKS = [
     'DIVISLAB.NS', 'DRREDDY.NS', 'BRITANNIA.NS', 'CIPLA.NS', 'APOLLOHOSP.NS',
     'HINDALCO.NS', 'EICHERMOT.NS', 'BPCL.NS', 'HEROMOTOCO.NS', 'INDUSINDBK.NS',
     'TATACONSUM.NS', 'HDFCAMC.NS', 'DMART.NS', 'PIDILITIND.NS', 'TRENT.NS',
+    # User's custom watchlist
+    'MUFIN.NS', 'NEPHROPLUS.NS', 'ZYDUSWELL.NS', 'PIRAMALFIN.NS',
+    'WAAREEENER.NS', 'JIOFIN.NS', 'BEL.NS', 'GODAVARIB.NS', 'RAIN.NS',
+    'BELRISE.NS', 'NIITLTD.NS', 'AMAGI.NS',
 ]
 
 NSE_INDEX_SYMBOLS = {
@@ -95,6 +99,13 @@ STOCK_SECTORS = {
     'BPCL.NS': 'Energy', 'HEROMOTOCO.NS': 'Automobile', 'INDUSINDBK.NS': 'Banking',
     'TATACONSUM.NS': 'FMCG', 'HDFCAMC.NS': 'Finance', 'DMART.NS': 'Retail',
     'PIDILITIND.NS': 'Chemicals', 'TRENT.NS': 'Retail',
+    # User's custom watchlist
+    'MUFIN.NS': 'Finance', 'NEPHROPLUS.NS': 'Healthcare',
+    'ZYDUSWELL.NS': 'Pharma', 'PIRAMALFIN.NS': 'Finance',
+    'WAAREEENER.NS': 'Energy', 'JIOFIN.NS': 'Finance',
+    'BEL.NS': 'Defense', 'GODAVARIB.NS': 'Chemicals',
+    'RAIN.NS': 'Chemicals', 'BELRISE.NS': 'Automobile',
+    'NIITLTD.NS': 'IT', 'AMAGI.NS': 'Media',
 }
 
 # ─── Cache Helpers ──────────────────────────────────────────────────────────

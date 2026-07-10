@@ -39,7 +39,7 @@ jobs:
 
       - name: Run Darvas Box Scanner
         run: |
-          python /tmp/gh-scanner.py --output-dir data --stocks 50
+          python /tmp/gh-scanner.py --output-dir data --stocks 99
 
       - name: Commit and push data updates
         run: |

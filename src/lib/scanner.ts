@@ -37,6 +37,19 @@ const STOCK_LIST = [
   { symbol: 'ADANIENT.NS', name: 'Adani Enterprises' },
   { symbol: 'JSWSTEEL.NS', name: 'JSW Steel' },
   { symbol: 'BAJFINANCE.NS', name: 'Bajaj Finance' },
+  // User's custom watchlist
+  { symbol: 'MUFIN.NS', name: 'Mufin Green Finance' },
+  { symbol: 'NEPHROPLUS.NS', name: 'Nephro Plus' },
+  { symbol: 'ZYDUSWELL.NS', name: 'Zydus Wellness' },
+  { symbol: 'PIRAMALFIN.NS', name: 'Piramal Finance' },
+  { symbol: 'WAAREEENER.NS', name: 'Waaree Energies' },
+  { symbol: 'JIOFIN.NS', name: 'Jio Financial Services' },
+  { symbol: 'BEL.NS', name: 'Bharat Electronics' },
+  { symbol: 'GODAVARIB.NS', name: 'Godavari Biorefineries' },
+  { symbol: 'RAIN.NS', name: 'Rain Industries' },
+  { symbol: 'BELRISE.NS', name: 'Belrise Industries' },
+  { symbol: 'NIITLTD.NS', name: 'NIIT Ltd' },
+  { symbol: 'AMAGI.NS', name: 'Amagi' },
 ];
 
 export function getScannerStocks() {
