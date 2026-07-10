@@ -1,7 +1,8 @@
 /**
  * Darvas Scanner — scans NSE stock universe for active Darvas Box patterns
+ * Uses pre-computed scanner data from GitHub Actions when available.
  */
-import { fetchIndianStockData } from './marketData';
+import { fetchIndianStockData, fetchScannerData } from './marketData';
 import { calculateDarvasStrategy, Candle } from './darvas';
 
 export interface ScannerResult {
@@ -42,12 +43,141 @@ export function getScannerStocks() {
   return STOCK_LIST;
 }
 
+/**
+ * Fetch pre-computed scanner results from GitHub Pages static JSON.
+ * Falls back to live scanning if static data is unavailable.
+ */
+export async function fetchPrecomputedScannerResults(): Promise<{
+  results: ScannerResult[];
+  source: 'api_live' | 'static_json' | 'live';
+  updatedAt: string;
+}> {
+  // 1) Try live API backend scanner endpoint (most current)
+  const apiUrl = typeof window !== 'undefined' ? (window as any).BBT_API_URL : undefined;
+  if (apiUrl) {
+    try {
+      const resp = await fetch(`${apiUrl}/api/scanner?limit=50`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.picks && data.picks.length > 0) {
+          const results = data.picks.map(mapPickToResult);
+          return { results, source: 'api_live', updatedAt: data.updatedAt || new Date().toISOString() };
+        }
+      }
+    } catch {
+      // Fall through
+    }
+  }
+
+  // 2) Try static JSON (from GitHub Actions)
+  const scannerData = await fetchScannerData();
+  if (scannerData && scannerData.picks && scannerData.picks.length > 0) {
+    const results = scannerData.picks.map(mapPickToResult);
+    return { results, source: 'static_json', updatedAt: scannerData.updatedAt || '' };
+  }
+
+  // 3) Fallback: live scan from browser
+  const results: ScannerResult[] = [];
+  for (const stock of STOCK_LIST) {
+    try {
+      const result = await scanStock(stock.symbol, stock.name);
+      results.push(result);
+    } catch {
+      results.push({
+        symbol: stock.symbol,
+        name: stock.name,
+        currentPrice: 0,
+        boxes: 0,
+        activeBox: null,
+        signal: 'NONE',
+        signalStrength: 0,
+        volumeSurge: 0,
+        trades: 0,
+        winRate: 0,
+        daysInBox: 0,
+        isConsolidating: false,
+        source: 'error',
+      });
+    }
+  }
+
+  // Sort: breakout signals first, then box formations, then by signal strength
+  results.sort((a, b) => {
+    const order = { BREAKOUT: 0, BOX_FORMED: 1, WATCHING: 2, BREAKDOWN: 3, NONE: 4 } as const;
+    const diff = (order[a.signal] ?? 5) - (order[b.signal] ?? 5);
+    if (diff !== 0) return diff;
+    return b.signalStrength - a.signalStrength;
+  });
+
+  return { results, source: 'live', updatedAt: new Date().toISOString() };
+}
+
+/**
+ * Map a scanner.json pick to the ScannerResult interface.
+ */
+function mapPickToResult(pick: { symbol?: string; name?: string; price?: number; signal?: string; score?: number; uptrend?: boolean; boxTop?: number; boxBottom?: number; volumeRatio?: number; isBreakout?: boolean; boxRange?: number }): ScannerResult {
+  const signal = pick.signal || 'ALERT';
+  const isBreakout = pick.isBreakout || false;
+  const score = pick.score || 0;
+  const uptrend = pick.uptrend || false;
+  const boxTop = pick.boxTop || 0;
+  const boxBottom = pick.boxBottom || 0;
+  const boxRange = pick.boxRange || 0;
+
+  // Map the scanner signal to the UI signal
+  let uiSignal: ScannerResult['signal'];
+  let signalStrength: number;
+
+  if (isBreakout && signal === 'BUY') {
+    uiSignal = 'BREAKOUT';
+    signalStrength = Math.min(100, score + 20);
+  } else if (signal === 'BUY' || isBreakout) {
+    uiSignal = 'BREAKOUT';
+    signalStrength = Math.min(100, score + 10);
+  } else if (uptrend && score >= 50) {
+    uiSignal = 'BOX_FORMED';
+    signalStrength = score;
+  } else if (uptrend) {
+    uiSignal = 'WATCHING';
+    signalStrength = Math.max(10, score);
+  } else {
+    uiSignal = 'NONE';
+    signalStrength = Math.max(0, score - 20);
+  }
+
+  const activeBox = boxTop > 0 && boxBottom > 0
+    ? {
+        top: boxTop,
+        bottom: boxBottom,
+        height: boxBottom > 0 ? ((boxTop - boxBottom) / boxBottom) * 100 : 0,
+      }
+    : null;
+
+  return {
+    symbol: pick.symbol || '',
+    name: pick.name || pick.symbol || '',
+    currentPrice: pick.price || 0,
+    boxes: activeBox ? 1 : 0,
+    activeBox,
+    signal: uiSignal,
+    signalStrength,
+    volumeSurge: pick.volumeRatio || 1,
+    trades: 0,
+    winRate: 0,
+    daysInBox: 0,
+    isConsolidating: activeBox !== null && uiSignal === 'BOX_FORMED',
+    source: 'static_json',
+  };
+}
+
+/**
+ * Live scan a single stock (fallback when static JSON is unavailable).
+ */
 export async function scanStock(symbol: string, name: string): Promise<ScannerResult> {
   const { candles, source } = await fetchIndianStockData(symbol, '1d', '6mo');
   
   const result = calculateDarvasStrategy(candles, 4);
   const lastCandle = candles[candles.length - 1];
-  const prevCandle = candles[candles.length - 2];
   
   const currentPrice = lastCandle?.close || 0;
   const activeBoxes = result.boxes.filter(b => b.endTime === null);

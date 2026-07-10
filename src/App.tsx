@@ -1,11 +1,11 @@
 import { useEffect, useState, useCallback, ReactNode } from 'react';
 import { fetchIndianStockData, FetchResult } from './lib/marketData';
-import { calculateDarvasStrategy, Candle, Trade, BacktestMetrics } from './lib/darvas';
+import { calculateDarvasStrategy, Candle, CandleData, Trade, BacktestMetrics } from './lib/darvas';
 import { TradingChart } from './components/Chart';
 import StockSearch from './components/StockSearch';
 import EducationView from './components/Education';
 import AlertsPanel from './components/AlertsPanel';
-import { scanStock, ScannerResult, getScannerStocks } from './lib/scanner';
+import { scanStock, getScannerStocks, ScannerResult, fetchPrecomputedScannerResults } from './lib/scanner';
 import { formatCurrency, formatPercent, formatVolume, formatDate } from './lib/utils';
 import { AppSettings } from './lib/constants';
 import {
@@ -31,6 +31,19 @@ const TABS: Tab[] = [
   { id: 'alerts', label: 'Alerts', icon: <Bell className="w-4 h-4" /> },
   { id: 'settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
 ];
+
+interface DarvasAnalysisResult {
+  boxes: {
+    bottom: number;
+    top: number;
+    startTime: number;
+    endTime: number | null;
+  }[];
+  topSeries: CandleData[];
+  bottomSeries: CandleData[];
+  trades: Trade[];
+  metrics: BacktestMetrics;
+}
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -60,19 +73,13 @@ const STOCK_UNIVERSE = [
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>('terminal');
   const [candles, setCandles] = useState<Candle[]>([]);
-  const [darvasData, setDarvasData] = useState<{
-    boxes: any[];
-    topSeries: any[];
-    bottomSeries: any[];
-    trades: Trade[];
-    metrics: BacktestMetrics;
-  } | null>(null);
+  const [darvasData, setDarvasData] = useState<DarvasAnalysisResult | null>(null);
   const [symbol, setSymbol] = useState('RELIANCE.NS');
   const [ghostDays, setGhostDays] = useState(4);
   const [volumeThreshold, setVolumeThreshold] = useState(1.5);
   const [breakoutBuffer, setBreakoutBuffer] = useState(0.15);
   const [isLoading, setIsLoading] = useState(true);
-  const [dataSource, setDataSource] = useState<'yahoo_live' | 'simulated'>('simulated');
+  const [dataSource, setDataSource] = useState<'static_json' | 'yahoo_live' | 'simulated'>('simulated');
   const [dataFetchTime, setDataFetchTime] = useState<number>(0);
   const [useINR, setUseINR] = useState(true);
   const [showParams, setShowParams] = useState(true);
@@ -122,6 +129,24 @@ export default function App() {
     setShowScanner(true);
     setScanResults([]);
     
+    // Try pre-computed scanner data from GitHub Actions first
+    try {
+      const { results, source } = await fetchPrecomputedScannerResults();
+      if (results.length > 0) {
+        setScanResults(results);
+        setScanProgress(
+          `Scan loaded from ${source === 'api_live' ? 'Live API' : source === 'static_json' ? 'GitHub Actions' : 'live browser'} — ` +
+          `${results.filter(r => r.signal === 'BREAKOUT').length} breakout, ` +
+          `${results.filter(r => r.signal === 'BOX_FORMED').length} box formed`
+        );
+        setScanning(false);
+        return;
+      }
+    } catch {
+      // Fall through to live scan
+    }
+
+    // Fallback: live browser scan
     const stocks = getScannerStocks();
     const results: ScannerResult[] = [];
     
@@ -259,19 +284,37 @@ export default function App() {
         {/* Data Source Status + Price Ticker */}
         <div className="flex items-center space-x-3 text-xs">
           <div className={`flex items-center space-x-1 px-2 py-1 rounded border ${
-            dataSource === 'yahoo_live'
+            dataSource === 'api_live'
+              ? 'bg-green-500/10 text-green-500 border-green-500/20'
+              : dataSource === 'static_json'
+              ? 'bg-green-500/10 text-green-500 border-green-500/20'
+              : dataSource === 'yahoo_live'
               ? 'bg-green-500/10 text-green-500 border-green-500/20'
               : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
           }`}>
-            <div className={`w-1.5 h-1.5 rounded-full ${dataSource === 'yahoo_live' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
-            <span>{dataSource === 'yahoo_live' ? 'YAHOO LIVE' : 'SIMULATED'}</span>
+            <div className={`w-1.5 h-1.5 rounded-full ${
+              dataSource === 'api_live' ? 'bg-green-500 animate-pulse' :
+              dataSource === 'static_json' ? 'bg-green-500 animate-pulse' :
+              dataSource === 'yahoo_live' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'
+            }`} />
+            <span>{dataSource === 'api_live' ? '🔵 API LIVE' : dataSource === 'static_json' ? '📦 STATIC JSON' : dataSource === 'yahoo_live' ? 'YAHOO LIVE' : 'SIMULATED'}</span>
           </div>
           
           {/* Data source tip */}
           {dataSource === 'simulated' && (
             <div className="hidden md:flex items-center space-x-1 text-yellow-500/70 text-[9px] max-w-[140px]">
               <AlertTriangle className="w-2.5 h-2.5 shrink-0" />
-              <span>Browser CORS blocks real API — run locally with `npm run dev` for live data</span>
+              <span>Browser CORS blocks real API — data source unavailable</span>
+            </div>
+          )}
+          {dataSource === 'api_live' && (
+            <div className="hidden md:flex items-center space-x-1 text-green-500/70 text-[9px] max-w-[160px]">
+              <span>🔵 Live from Flask API via localtunnel</span>
+            </div>
+          )}
+          {dataSource === 'static_json' && (
+            <div className="hidden md:flex items-center space-x-1 text-green-500/70 text-[9px] max-w-[160px]">
+              <span>✅ Live data from GitHub Actions (updated ~10 min)</span>
             </div>
           )}
           
@@ -432,8 +475,21 @@ export default function App() {
                 <div className="absolute top-3 right-3 z-20">
                   <div className="px-2.5 py-1 bg-yellow-600/20 border border-yellow-500/30 rounded text-[9px] text-yellow-400 flex items-center space-x-1.5">
                     <AlertTriangle className="w-2.5 h-2.5" />
-                    <span>SIMULATED DATA — Yahoo Finance API blocked by browser CORS</span>
-                    <span className="text-yellow-600 ml-1">Run <code className="bg-yellow-900/30 px-1 rounded">npm run dev</code> on localhost for live data</span>
+                    <span>SIMULATED DATA — No data source available</span>
+                  </div>
+                </div>
+              )}
+              {dataSource === 'api_live' && (
+                <div className="absolute top-3 right-3 z-20">
+                  <div className="px-2.5 py-1 bg-green-600/20 border border-green-500/30 rounded text-[9px] text-green-400 flex items-center space-x-1.5">
+                    <span>🔵 LIVE NSE DATA — real-time via Flask API backend</span>
+                  </div>
+                </div>
+              )}
+              {dataSource === 'static_json' && (
+                <div className="absolute top-3 right-3 z-20">
+                  <div className="px-2.5 py-1 bg-green-600/20 border border-green-500/30 rounded text-[9px] text-green-400 flex items-center space-x-1.5">
+                    <span>✅ REAL NSE DATA — updated via GitHub Actions (~10 min)</span>
                   </div>
                 </div>
               )}
@@ -520,7 +576,7 @@ export default function App() {
                     <>
                       <div className="border-t border-slate-800 pt-2 mt-2">
                         <h4 className="text-[9px] text-slate-500 font-bold mb-1 uppercase tracking-widest">Detected Boxes</h4>
-                        {darvasData.boxes.slice(-5).reverse().map((box: any, i: number) => (
+                        {darvasData.boxes.slice(-5).reverse().map((box: { bottom: number; top: number }, i: number) => (
                           <div key={i} className="text-[9px] flex justify-between py-0.5">
                             <span className="text-slate-500">Box #{darvasData.boxes.length - i}</span>
                             <span className="text-slate-300">{formatCurrency(box.bottom, true)} - {formatCurrency(box.top, true)}</span>
@@ -566,7 +622,27 @@ export default function App() {
                       <span>⚠ Running on simulated data. Backtest metrics reflect simulated price action, not real market data.</span>
                     </p>
                     <p className="text-[8px] text-yellow-600 mt-1">
-                      For live data: run <code className="bg-yellow-900/30 px-1 rounded">npm run dev</code> on localhost
+                      Enable GitHub Actions scanner for live data
+                    </p>
+                  </div>
+                )}
+                {dataSource === 'api_live' && (
+                  <div className="mt-3 p-2 bg-green-500/10 rounded border border-green-500/20">
+                    <p className="text-[9px] text-green-400 flex items-center space-x-1">
+                      <span>🔵 Live NSE data via Flask API backend</span>
+                    </p>
+                    <p className="text-[8px] text-green-600 mt-1">
+                      Real-time yfinance data — auto-refresh every 60s
+                    </p>
+                  </div>
+                )}
+                {dataSource === 'static_json' && (
+                  <div className="mt-3 p-2 bg-green-500/10 rounded border border-green-500/20">
+                    <p className="text-[9px] text-green-400 flex items-center space-x-1">
+                      <span>✅ Real NSE market data via GitHub Actions</span>
+                    </p>
+                    <p className="text-[8px] text-green-600 mt-1">
+                      Data refreshes every ~10 minutes during market hours
                     </p>
                   </div>
                 )}
@@ -671,7 +747,10 @@ export default function App() {
       <footer className="h-7 bg-[#1e222d] border-t border-slate-800 flex items-center px-3 overflow-hidden shrink-0 z-30">
         <div className="flex items-center space-x-6 text-[10px] font-mono whitespace-nowrap overflow-x-auto no-scrollbar w-full">
           <span className="text-slate-500 flex items-center space-x-1">
-            <div className={`w-1.5 h-1.5 rounded-full ${dataSource === 'yahoo_live' ? 'bg-green-500' : 'bg-yellow-500'}`} />
+            <div className={`w-1.5 h-1.5 rounded-full ${
+              dataSource === 'static_json' ? 'bg-green-500' :
+              dataSource === 'yahoo_live' ? 'bg-green-500' : 'bg-yellow-500'
+            }`} />
             <span>{symbol.replace('.NS', '')}</span>
             {lastCandle && (
               <><span className="text-white">{formatCurrency(lastCandle.close, useINR)}</span>
@@ -682,9 +761,11 @@ export default function App() {
           <span className="text-slate-500">{darvasData ? `${darvasData.boxes.length} boxes · ${darvasData.metrics.totalTrades} trades · ${formatPercent(darvasData.metrics.winRate)} win rate` : 'Load data...'}</span>
           <span className="text-slate-600">|</span>
           <span className="text-slate-500">
-            {dataSource === 'yahoo_live' 
+            {dataSource === 'static_json'
+              ? '📦 GitHub Actions — Live NSE Data'
+              : dataSource === 'yahoo_live' 
               ? '📡 Yahoo Finance LIVE' 
-              : '⚠ SIMULATED (CORS blocked — run npm run dev for live data)'}
+              : '⚠ SIMULATED (no data source available)'}
           </span>
         </div>
       </footer>

@@ -1,0 +1,85 @@
+name: NSE Darvas Scanner
+
+on:
+  schedule:
+    # Every 10 minutes, Mon-Fri, 3:00-10:00 UTC (8:30 AM - 3:30 PM IST)
+    - cron: '*/10 3-10 * * 1-5'
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install yfinance numpy
+
+      - name: Download scanner script
+        run: |
+          curl -sL \
+            "https://raw.githubusercontent.com/govindtank/Box-Breakout-Tracker/main/scripts/gh-scanner.py" \
+            -o /tmp/gh-scanner.py
+
+      - name: Run Darvas Box Scanner
+        run: |
+          python /tmp/gh-scanner.py --output-dir data --stocks 50
+
+      - name: Commit and push data updates
+        run: |
+          git config user.name "Govind Tank"
+          git config user.email "govindtank600@gmail.com"
+
+          # If data directory doesn't exist, create it
+          mkdir -p data
+
+          # Stage all changes in data/
+          git add data/
+
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit — market might be closed or data unchanged."
+          else
+            git commit -m "📊 Scanner update $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+            echo "✅ Scanner data pushed to gh-pages"
+          fi
+
+      - name: Debug — list output files
+        run: |
+          echo "=== data/ directory ==="
+          find data -type f -name "*.json" | sort
+          echo ""
+          echo "=== File sizes ==="
+          du -sh data/ data/stock/ 2>/dev/null || echo "No stock dir"
+          echo ""
+          echo "=== scanner.json summary ==="
+          python3 -c "
+import json
+with open('data/scanner.json') as f:
+    d = json.load(f)
+print(f'Scanner picks: {d[\"count\"]} / {d[\"scanned\"]} scanned')
+print(f'Updated: {d[\"updatedAt\"]}')
+buys = [p for p in d['picks'] if p.get('signal') == 'BUY']
+watches = [p for p in d['picks'] if p.get('signal') == 'WATCH']
+print(f'BUY signals: {len(buys)}')
+print(f'WATCH signals: {len(watches)}')
+for p in buys[:3]:
+    print(f'  - {p[\"symbol\"]}: score={p[\"score\"]}, price={p[\"price\"]}')
+" 2>&1 || echo "scanner.json not available"

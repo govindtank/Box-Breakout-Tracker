@@ -6,12 +6,18 @@ interface StockSearchProps {
   currentSymbol: string;
 }
 
+interface StockItem {
+  symbol: string;
+  name: string;
+  category: string;
+}
+
 export default function StockSearch({ onSelectStock, currentSymbol }: StockSearchProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [filteredStocks, setFilteredStocks] = React.useState<any[]>([]);
+  const [filteredStocks, setFilteredStocks] = React.useState<StockItem[]>([]);
   
   // NSE stock universe with search categories
-  const STOCKS = [
+  const STOCKS: StockItem[] = [
     { symbol: 'RELIANCE.NS', name: 'Reliance Industries', category: 'Energy' },
     { symbol: 'TCS.NS', name: 'Tata Consultancy Services', category: 'Technology' },
     { symbol: 'HDFCBANK.NS', name: 'HDFC Bank', category: 'Financial Services' },

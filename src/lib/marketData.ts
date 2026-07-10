@@ -5,10 +5,12 @@
  */
 
 import { Candle } from './darvas';
+import type { ScannerResult } from './scanner';
 
 const YAHOO_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
+const DATA_BASE = '/Box-Breakout-Tracker/data';
 
-export type DataSource = 'yahoo_live' | 'simulated';
+export type DataSource = 'api_live' | 'static_json' | 'yahoo_live' | 'simulated';
 
 export interface FetchResult {
   candles: Candle[];
@@ -23,11 +25,32 @@ export async function fetchIndianStockData(
   range: string = '1y'
 ): Promise<FetchResult> {
   const fetchedAt = Date.now();
-  
-  // Yahoo Finance requires .NS suffix for NSE stocks - keep it as-is
-  const yahooSymbol = symbol; // Already in format like RELIANCE.NS
 
-  // Try Yahoo Finance first (CORS-compatible - no custom headers)
+  // 1) Try live API backend (BBT API — most reliable, server-side yfinance)
+  const apiUrl = typeof window !== 'undefined' ? (window as any).BBT_API_URL : undefined;
+  if (apiUrl) {
+    try {
+      const apiData = await fetchFromApi(apiUrl, symbol, interval, range);
+      if (apiData && apiData.length > 20) {
+        return { candles: apiData, source: 'api_live', symbol, fetchedAt };
+      }
+    } catch (err) {
+      console.warn('Live API unavailable:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  // 2) Try static JSON from GitHub Pages data (backup source)
+  try {
+    const staticData = await fetchFromStaticJson(symbol);
+    if (staticData && staticData.candles.length > 20) {
+      return { candles: staticData.candles, source: 'static_json', symbol, fetchedAt };
+    }
+  } catch (err) {
+    console.warn('Static JSON unavailable:', err instanceof Error ? err.message : err);
+  }
+
+  // 2) Try Yahoo Finance directly (works on localhost, may work on production)
+  const yahooSymbol = symbol;
   try {
     const yahooData = await fetchFromYahoo(yahooSymbol, interval, range);
     if (yahooData && yahooData.length > 20) {
@@ -36,30 +59,70 @@ export async function fetchIndianStockData(
   } catch (err) {
     console.warn('Yahoo Finance API failed:', err instanceof Error ? err.message : err);
   }
-  
-  // Try alternate Yahoo Finance endpoint (v7 -> v8 sometimes works differently)
-  try {
-    const altUrl = `${YAHOO_BASE}/${yahooSymbol}?interval=${interval}&range=${range}`;
-    const response = await fetch(altUrl);
-    if (response.ok) {
-      const data = await response.json();
-      const result = data?.chart?.result?.[0];
-      if (result) {
-        const candles = parseYahooResult(result);
-        if (candles.length > 20) {
-          return { candles, source: 'yahoo_live', symbol, fetchedAt };
-        }
-      }
-    }
-  } catch {
-    // Silently fail - use simulated
-  }
 
-  // Final fallback: Generate realistic data based on ACTUAL Yahoo Finance period data
-  // This is clearly labeled as simulated in the UI
-  console.warn(`⚠ Using SIMULATED data for ${symbol} — Yahoo Finance API blocked from browser`);
+  // 3) Final fallback: Simulated data
+  console.warn(`⚠ Using SIMULATED data for ${symbol} — all API sources unavailable`);
   const simData = generateSimulatedData(symbol, now(), range);
   return { candles: simData, source: 'simulated', symbol, fetchedAt };
+}
+
+/**
+ * Fetch stock OHLC data from the live Flask API backend via localtunnel.
+ * This is the primary data source — server-side yfinance with no CORS issues.
+ */
+async function fetchFromApi(apiUrl: string, symbol: string, interval: string, range: string): Promise<Candle[]> {
+  const url = `${apiUrl}/api/stock/${symbol}?interval=${interval}&range=${range}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`API returned ${response.status}`);
+  }
+  const data = await response.json();
+  const candles: Candle[] = (data.candles || []).map((c: { time: number; open: number; high: number; low: number; close: number; volume: number }) => ({
+    time: c.time,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+  }));
+  if (candles.length === 0) throw new Error('Empty candles from API');
+  return candles;
+}
+
+/**
+ * Fetch stock OHLC data from pre-computed static JSON on GitHub Pages.
+ */
+async function fetchFromStaticJson(symbol: string): Promise<{ candles: Candle[] } | null> {
+  const url = `${DATA_BASE}/stock/${symbol}.json`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Static JSON returned ${response.status}`);
+  }
+  const data = await response.json();
+  const candles: Candle[] = (data.candles || []).map((c: { time: number; open: number; high: number; low: number; close: number; volume: number }) => ({
+    time: c.time,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+  }));
+  return { candles };
+}
+
+/**
+ * Fetch pre-computed scanner results from GitHub Pages.
+ * Returns the scanner picks directly or null if unavailable.
+ */
+export async function fetchScannerData(): Promise<{ picks: ScannerResult[]; count: number; scanned: number; updatedAt: string } | null> {
+  try {
+    const url = `${DATA_BASE}/scanner.json`;
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
 }
 
 function now(): number {
@@ -91,7 +154,15 @@ async function fetchFromYahoo(symbol: string, interval: string, range: string): 
   return parseYahooResult(result);
 }
 
-function parseYahooResult(result: any): Candle[] {
+interface YahooFinanceResult {
+  timestamp: number[];
+  indicators: {
+    quote: Array<{ open?: number; high?: number; low?: number; close?: number; volume?: number }>;
+    adjclose: Array<{ adjclose?: number[] }>;
+  };
+}
+
+function parseYahooResult(result: YahooFinanceResult): Candle[] {
   const timestamps: number[] = result.timestamp || [];
   const quotes = result.indicators?.quote?.[0] || {};
   const adjclose = result.indicators?.adjclose?.[0]?.adjclose || [];

@@ -39,6 +39,11 @@ export interface BoxPoint {
   value: number;
 }
 
+export interface CandleData {
+  time: number;
+  value: number;
+}
+
 /**
  * Darvas Box Strategy - State Machine Implementation
  * 
